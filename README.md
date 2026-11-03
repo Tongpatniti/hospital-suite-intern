@@ -6,7 +6,7 @@ Monorepo สำหรับนักศึกษาฝึกงาน โคร�
 - Frontend: React 19 + Vite + TypeScript + Tailwind + `@repo/ui` (shadcn-style)
 - Backend: Express 5 + PostgreSQL (`pg`) + bcrypt
 - Workspace: pnpm + Turborepo
-- ฐานข้อมูล: `mtp_training` (แยกจากข้อมูลจริง)
+- ฐานข้อมูล: `training` (แยกจากข้อมูลจริง)
 
 ---
 
