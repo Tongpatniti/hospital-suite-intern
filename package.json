@@ -1,0 +1,34 @@
+{
+  "name": "hospital-suite-intern",
+  "version": "1.0.0",
+  "description": "Starter monorepo สำหรับนักศึกษาฝึกงาน — โครงสร้างเดียวกับ hospital-suite-monorepo",
+  "private": true,
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "pnpm --filter backend --filter hub --filter example-app exec tsc -b",
+    "db:setup": "pnpm --filter backend db:setup",
+    "backend": "pnpm --filter backend dev",
+    "hub": "pnpm --filter hub dev",
+    "example": "pnpm --filter example-app dev"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.29.3",
+  "pnpm": {
+    "onlyBuiltDependencies": ["bcrypt", "esbuild"],
+    "overrides": {
+      "react": "^18.2.0",
+      "react-dom": "^18.2.0",
+      "@types/react": "^18.2.0",
+      "@types/react-dom": "^18.2.0",
+      "@floating-ui/react-dom": "^2.1.7",
+      "@floating-ui/react": "^0.27.17"
+    }
+  },
+  "devDependencies": {
+    "turbo": "^2.8.7"
+  }
+}
