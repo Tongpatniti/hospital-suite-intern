@@ -16,7 +16,7 @@ const cfg = {
   host: process.env.DB_HOST,
   port: parseInt(process.env.DB_PORT || '5432', 10),
 };
-const targetDb = process.env.DB_DATABASE || 'mtp_training';
+const targetDb = process.env.DB_DATABASE || 'training';
 const adminDb = process.env.DB_ADMIN_DATABASE || 'postgres';
 
 const missing = ['DB_USER', 'DB_PASSWORD', 'DB_HOST'].filter((k) => !process.env[k]);
