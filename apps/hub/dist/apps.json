@@ -1,0 +1,37 @@
+[
+  {
+    "name": "Document Control Center",
+    "url": "/dcc/",
+    "icon": "FileText",
+    "description": "Manage documents, revisions, approvals, and training records",
+    "color": "bg-blue-500"
+  },
+  {
+    "name": "Hospital Reports",
+    "url": "/reports/",
+    "icon": "ClipboardList",
+    "description": "View and generate hospital reports and statistics",
+    "color": "bg-emerald-500"
+  },
+  {
+    "name": "Lab System",
+    "url": "/lab/",
+    "icon": "FlaskConical",
+    "description": "Laboratory information management system",
+    "color": "bg-purple-500"
+  },
+  {
+    "name": "HR Leave",
+    "url": "/hr/leave/history",
+    "icon": "CalendarCheck",
+    "description": "Apply for leave, view balances, and manage leave requests",
+    "color": "bg-teal-500"
+  },
+  {
+    "name": "Master Setup",
+    "url": "/setup/",
+    "icon": "Settings",
+    "description": "Configure master data, departments, and system settings",
+    "color": "bg-amber-500"
+  }
+]
