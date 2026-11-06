@@ -11,7 +11,7 @@ import { fmtDateTimeTH } from '../lib/format';
 import { useAuth } from '../contexts/AuthContext';
 
 interface Setting { setting_key: string; setting_value: string; value_type: string; description: string | null; modify_by_name: string | null; modify_date: string | null }
-interface SlaRule { sla_rule_id: number; status: string; urgency: string | null; asset_type: string | null; warn_after_hours: number; escalate_after_hours: number | null; is_active: boolean }
+interface SlaRule { sla_rule_id: number; status: string; urgency: string | null; asset_type: string | null; warn_after_hours: number; is_active: boolean }
 
 const RepairSettings: React.FC = () => {
   const { hasPermission } = useAuth();
@@ -19,7 +19,7 @@ const RepairSettings: React.FC = () => {
   const [settings, setSettings] = useState<Setting[]>([]);
   const [rules, setRules] = useState<SlaRule[]>([]);
   const [draft, setDraft] = useState<Record<string, string>>({});
-  const [ruleDraft, setRuleDraft] = useState<Record<number, { warn: string; esc: string }>>({});
+  const [ruleDraft, setRuleDraft] = useState<Record<number, string>>({});
   const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -29,7 +29,7 @@ const RepairSettings: React.FC = () => {
       setSettings(s.data.data);
       setRules(r.data.data);
       setDraft(Object.fromEntries(s.data.data.map((x: Setting) => [x.setting_key, x.setting_value])));
-      setRuleDraft(Object.fromEntries(r.data.data.map((x: SlaRule) => [x.sla_rule_id, { warn: String(x.warn_after_hours), esc: x.escalate_after_hours == null ? '' : String(x.escalate_after_hours) }])));
+      setRuleDraft(Object.fromEntries(r.data.data.map((x: SlaRule) => [x.sla_rule_id, String(x.warn_after_hours)])));
     } catch (err) {
       toast({ title: errorMessage(err, 'โหลดค่าตั้งไม่สำเร็จ'), variant: 'destructive' });
     }
@@ -40,7 +40,7 @@ const RepairSettings: React.FC = () => {
   const changedSettings = settings.filter((s) => draft[s.setting_key] !== s.setting_value);
   const changedRules = rules.filter((r) => {
     const d = ruleDraft[r.sla_rule_id];
-    return d && (Number(d.warn) !== r.warn_after_hours || (d.esc === '' ? null : Number(d.esc)) !== r.escalate_after_hours);
+    return d !== undefined && Number(d) !== r.warn_after_hours;
   });
   const dirty = changedSettings.length + changedRules.length;
 
@@ -52,9 +52,8 @@ const RepairSettings: React.FC = () => {
         await api.patch(`/api/repair-settings/${s.setting_key}`, { value: draft[s.setting_key], reason });
       }
       for (const r of changedRules) {
-        const d = ruleDraft[r.sla_rule_id];
         await api.put(`/api/repair-sla-rules/${r.sla_rule_id}`, {
-          warn_after_hours: Number(d.warn), escalate_after_hours: d.esc === '' ? null : Number(d.esc), is_active: r.is_active, reason,
+          warn_after_hours: Number(ruleDraft[r.sla_rule_id]), is_active: r.is_active, reason,
         });
       }
       toast({ title: `บันทึก ${dirty} รายการแล้ว และเก็บในประวัติการแก้ไข` });
@@ -80,9 +79,9 @@ const RepairSettings: React.FC = () => {
           <CardHeader><CardTitle className="text-base">เวลาที่กำหนด (SLA) — หน่วยชั่วโมง</CardTitle></CardHeader>
           <CardContent className="p-0">
             <div className="overflow-x-auto">
-              <Table className="min-w-[520px]">
+              <Table className="min-w-[360px]">
                 <TableHeader className="bg-slate-100">
-                  <TableRow><TableHead>สถานะ</TableHead><TableHead className="w-28">เตือน</TableHead><TableHead className="w-28">ส่งต่อหัวหน้า</TableHead></TableRow>
+                  <TableRow><TableHead>สถานะ</TableHead><TableHead className="w-32">เตือนเมื่อค้างเกิน</TableHead></TableRow>
                 </TableHeader>
                 <TableBody>
                   {rules.map((r) => (
@@ -91,17 +90,14 @@ const RepairSettings: React.FC = () => {
                         {STATUS_LABEL[r.status] || r.status}
                         {r.urgency && <span className="text-xs text-red-600"> · {URGENCY_LABEL[r.urgency]}</span>}
                       </TableCell>
-                      {(['warn', 'esc'] as const).map((k) => (
-                        <TableCell key={k}>
-                          <Input
-                            type="number" min="0" step="0.5" disabled={!canEdit} className="h-8"
-                            aria-label={`${r.status} ${k}`}
-                            placeholder="–"
-                            value={ruleDraft[r.sla_rule_id]?.[k] ?? ''}
-                            onChange={(e) => setRuleDraft({ ...ruleDraft, [r.sla_rule_id]: { ...ruleDraft[r.sla_rule_id], [k]: e.target.value } })}
-                          />
-                        </TableCell>
-                      ))}
+                      <TableCell>
+                        <Input
+                          type="number" min="0.5" step="0.5" disabled={!canEdit} className="h-8"
+                          aria-label={`เวลาเตือน ${STATUS_LABEL[r.status] || r.status}`}
+                          value={ruleDraft[r.sla_rule_id] ?? ''}
+                          onChange={(e) => setRuleDraft({ ...ruleDraft, [r.sla_rule_id]: e.target.value })}
+                        />
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

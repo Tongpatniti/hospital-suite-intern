@@ -11,6 +11,8 @@ import api, { errorMessage } from '../lib/api';
 import { ASSET_TYPE_LABEL, STATUS_LABEL, type AssetType } from '../lib/repair';
 import { fmtDateTimeTH } from '../lib/format';
 import { useAuth } from '../contexts/AuthContext';
+import { AttachmentPicker } from '../components/Attachments';
+import { uploadPrepared, type PreparedFile } from '../lib/upload';
 
 interface AssetOption {
   asset_id: number;
@@ -48,6 +50,7 @@ const RepairCreate: React.FC = () => {
   const [dupMode, setDupMode] = useState<'none' | 'new'>('none');
   const [dupReason, setDupReason] = useState('');
   const [saving, setSaving] = useState(false);
+  const [files, setFiles] = useState<PreparedFile[]>([]);
 
   const requestTypes = (Object.keys(ASSET_TYPE_LABEL) as AssetType[]).filter((t) =>
     hasPermission(`repair.${t.toLowerCase()}.request`) || hasPermission('repair.all')
@@ -82,6 +85,7 @@ const RepairCreate: React.FC = () => {
     const t = openTickets[0];
     try {
       await api.post(`/api/repairs/${t.ticket_id}/watchers`, { source: 'DUPLICATE', note: description });
+      if (files.length > 0) await uploadPrepared(t.ticket_id, files, 'TICKET');
       toast({ title: `เพิ่มคุณเป็นผู้ติดตาม ${t.ticket_no} แล้ว` });
       navigate(`/repairs/${t.ticket_id}`);
     } catch (err) {
@@ -109,8 +113,17 @@ const RepairCreate: React.FC = () => {
         duplicate_of_ticket_id: openTickets.length > 0 ? openTickets[0].ticket_id : undefined,
         duplicate_reason: openTickets.length > 0 ? dupReason : undefined,
       });
-      toast({ title: `สร้างใบแจ้งซ่อม ${res.data.data.ticket_no} แล้ว` });
-      navigate(`/repairs/${res.data.data.ticket_id}`);
+      const created = res.data.data;
+      if (files.length > 0) {
+        const up = await uploadPrepared(created.ticket_id, files, 'TICKET');
+        if (up.errors.length > 0) {
+          toast({ title: `สร้างใบ ${created.ticket_no} แล้ว แต่แนบไฟล์ไม่สำเร็จ ${up.errors.length} ไฟล์`, description: up.errors.join('\n'), variant: 'destructive' });
+          navigate(`/repairs/${created.ticket_id}`);
+          return;
+        }
+      }
+      toast({ title: `สร้างใบแจ้งซ่อม ${created.ticket_no} แล้ว` });
+      navigate(`/repairs/${created.ticket_id}`);
     } catch (err) {
       const data = (err as { response?: { data?: { code?: string; open_tickets?: OpenTicket[] } } }).response?.data;
       if (data?.code === 'OPEN_TICKET_EXISTS' && data.open_tickets) setOpenTickets(data.open_tickets);
@@ -213,9 +226,10 @@ const RepairCreate: React.FC = () => {
               <Label htmlFor="description">อาการเสีย *</Label>
               <Textarea id="description" rows={4} value={description} onChange={(e) => setDescription(e.target.value)} />
             </div>
-            <p className="text-xs text-slate-500 md:col-span-2">
-              การแนบรูป/PDF จะเปิดใช้ในรอบถัดไป (ต้องเพิ่มไลบรารีย่อรูปฝั่ง backend)
-            </p>
+            <div className="space-y-1 md:col-span-2">
+              <Label>รูปอาการเสีย / เอกสาร</Label>
+              <AttachmentPicker files={files} onChange={setFiles} />
+            </div>
             <div className="flex gap-2 md:col-span-2">
               <Button type="submit" disabled={saving} className="bg-teal-700 hover:bg-teal-800">
                 {saving ? 'กำลังส่ง...' : 'ส่งใบแจ้งซ่อม'}

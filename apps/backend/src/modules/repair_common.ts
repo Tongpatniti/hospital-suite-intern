@@ -51,11 +51,11 @@ export const STATUS_ACTOR: Record<string, Actor> = {
   ACCEPTED: 'tech',
   IN_PROGRESS: 'tech',
   WAIT_PART: 'supply',
-  PART_APPROVAL: 'approver',
+  PART_APPROVAL: 'supply',
   PART_PURCHASING: 'supply',
   PART_ARRIVED: 'tech',
   WAIT_EXTERNAL: 'supply',
-  EXT_APPROVAL: 'approver',
+  EXT_APPROVAL: 'supply',
   EXT_SENT: 'supply',
   EXT_RECEIVED: 'tech',
   DONE: 'requester',
@@ -63,21 +63,28 @@ export const STATUS_ACTOR: Record<string, Actor> = {
 };
 
 // ใครกดเปลี่ยนไปสถานะปลายทางได้
-export const TARGET_ACTOR: Record<string, Actor | 'any'> = {
-  ACCEPTED: 'tech',
-  IN_PROGRESS: 'tech',
-  WAIT_PART: 'tech',
-  WAIT_EXTERNAL: 'tech',
-  DONE: 'tech',
-  PART_APPROVAL: 'supply',
-  PART_PURCHASING: 'approver',
-  PART_ARRIVED: 'supply',
-  EXT_APPROVAL: 'supply',
-  EXT_SENT: 'approver',
-  EXT_RECEIVED: 'supply',
-  CLOSED: 'requester',
-  CANCELLED: 'any',
+// ขั้นอนุมัติ (PART_PURCHASING / EXT_SENT) ให้พัสดุกดเองไปก่อน จนกว่าจะมีระบบอนุมัติหลายขั้น
+export const TARGET_ACTOR: Record<string, (Actor | 'any')[]> = {
+  ACCEPTED: ['tech'],
+  IN_PROGRESS: ['tech'],
+  WAIT_PART: ['tech'],
+  WAIT_EXTERNAL: ['tech'],
+  DONE: ['tech'],
+  PART_APPROVAL: ['supply'],
+  PART_PURCHASING: ['supply'],
+  PART_ARRIVED: ['supply'],
+  EXT_APPROVAL: ['supply'],
+  EXT_SENT: ['supply'],
+  EXT_RECEIVED: ['supply'],
+  CLOSED: ['requester'],
+  CANCELLED: ['any'],
 };
+
+/** ผู้ที่เปลี่ยนจาก from → to ได้ (ขั้นตรวจรับ: ทั้งช่างและผู้แจ้งส่งกลับซ่อมได้) */
+export function targetActors(from: string, to: string): (Actor | 'any')[] {
+  if (from === 'DONE' && to === 'IN_PROGRESS') return ['tech', 'requester'];
+  return TARGET_ACTOR[to] || ['any'];
+}
 
 export function assetTypeOf(equipmentTypeId: number | null | undefined): AssetType {
   if (equipmentTypeId === 1) return 'MEDICAL';
@@ -101,6 +108,8 @@ export function can(u: CurrentUser, perm: string) {
 // ประเภทงานที่ผู้ใช้เห็นได้ (ตามหลักเดียวกับ sidebar ของ asset-management)
 export function visibleTypes(u: CurrentUser): AssetType[] {
   if (u.permissions.includes('all') || u.permissions.includes('repair.all')) return ASSET_TYPES;
+  // พัสดุรับเรื่องอะไหล่/ส่งซ่อมนอกของทุกประเภท
+  if (u.permissions.includes('repair.supply')) return ASSET_TYPES;
   return ASSET_TYPES.filter((t) => {
     const k = t.toLowerCase();
     return u.permissions.includes(`repair.${k}.request`) || u.permissions.includes(`repair.${k}.tech`);
@@ -199,5 +208,12 @@ export function sendError(res: import('express').Response, err: unknown, fallbac
     return res.status(400).json({ success: false, message: pg.message });
   }
   console.error(fallback, err);
-  return res.status(500).json({ success: false, message: fallback });
+  // 42P01 = ไม่มีตาราง, 42703 = ไม่มีคอลัมน์ → schema ยังไม่ได้อัปเดต
+  if (pg && (pg.code === '42P01' || pg.code === '42703')) {
+    return res.status(500).json({
+      success: false,
+      message: `${fallback}: ฐานข้อมูลยังไม่อัปเดต (${pg.message}) — รัน pnpm --filter backend db:setup:repair แล้วรีสตาร์ต backend`,
+    });
+  }
+  return res.status(500).json({ success: false, message: `${fallback}${pg?.message ? ` (${pg.message})` : ''}` });
 }

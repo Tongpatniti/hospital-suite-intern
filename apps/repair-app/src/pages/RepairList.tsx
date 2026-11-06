@@ -11,6 +11,7 @@ import api, { errorMessage } from '../lib/api';
 import { ASSET_TYPE_LABEL, URGENCY_LABEL, slaLevel, type AssetType } from '../lib/repair';
 import { fmtDateTimeTH } from '../lib/format';
 import { SlaBadge, StatusPill } from '../components/RepairBadges';
+import { useAuth } from '../contexts/AuthContext';
 
 interface Row {
   ticket_id: number;
@@ -27,10 +28,12 @@ interface Row {
   assignee_name: string | null;
   hours_in_status: number;
   warn_after_hours: number | null;
-  escalate_after_hours: number | null;
 }
 
-const TABS = [
+// สถานะที่พัสดุต้องดำเนินการ
+const SUPPLY_STATUSES = 'WAIT_PART,PART_APPROVAL,PART_PURCHASING,WAIT_EXTERNAL,EXT_APPROVAL,EXT_SENT';
+
+const BASE_TABS = [
   { key: 'open', label: 'งานที่ยังไม่ปิด' },
   { key: 'mine', label: 'งานของฉัน' },
   { key: 'NEW', label: 'รอรับงาน' },
@@ -39,8 +42,11 @@ const TABS = [
 
 const RepairList: React.FC = () => {
   const navigate = useNavigate();
+  const { hasPermission } = useAuth();
+  const isSupply = hasPermission('repair.supply');
+  const TABS = isSupply ? [{ key: 'supply', label: 'งานพัสดุ' }, ...BASE_TABS] : BASE_TABS;
   const [rows, setRows] = useState<Row[]>([]);
-  const [tab, setTab] = useState('open');
+  const [tab, setTab] = useState(isSupply ? 'supply' : 'open');
   const [type, setType] = useState('');
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(false);
@@ -52,6 +58,7 @@ const RepairList: React.FC = () => {
       if (type) params.asset_type = type;
       if (tab === 'open') params.status = 'open';
       if (tab === 'NEW') params.status = 'NEW';
+      if (tab === 'supply') params.status = SUPPLY_STATUSES;
       if (tab === 'mine') { params.mine = '1'; params.status = 'open'; }
       const res = await api.get('/api/repairs', { params });
       setRows(res.data.data);
@@ -69,11 +76,11 @@ const RepairList: React.FC = () => {
 
   const stats = useMemo(() => {
     const open = rows.filter((r) => !['CLOSED', 'CANCELLED'].includes(r.status));
-    const lv = (r: Row) => slaLevel(r.hours_in_status, r.warn_after_hours, r.escalate_after_hours);
+    const lv = (r: Row) => slaLevel(r.hours_in_status, r.warn_after_hours);
     return {
       open: open.length,
-      over: open.filter((r) => ['over', 'escalated'].includes(lv(r))).length,
-      escalated: open.filter((r) => lv(r) === 'escalated').length,
+      over: open.filter((r) => lv(r) === 'over').length,
+      near: open.filter((r) => lv(r) === 'near').length,
       waitAccept: open.filter((r) => r.status === 'DONE').length,
     };
   }, [rows]);
@@ -95,7 +102,7 @@ const RepairList: React.FC = () => {
         {[
           ['งานที่แสดงและยังไม่ปิด', stats.open, ''],
           ['เกินเวลาที่กำหนด', stats.over, 'text-red-600'],
-          ['ส่งต่อหัวหน้าแล้ว', stats.escalated, 'text-red-600'],
+          ['ใกล้ครบเวลา', stats.near, 'text-amber-600'],
           ['รอผู้แจ้งตรวจรับ', stats.waitAccept, ''],
         ].map(([label, n, cls]) => (
           <Card key={label as string}>
@@ -176,7 +183,7 @@ const RepairList: React.FC = () => {
                     <TableCell>
                       {['CLOSED', 'CANCELLED'].includes(r.status)
                         ? <span className="text-xs text-slate-400">–</span>
-                        : <SlaBadge hours={r.hours_in_status} warn={r.warn_after_hours} esc={r.escalate_after_hours} />}
+                        : <SlaBadge hours={r.hours_in_status} warn={r.warn_after_hours} />}
                     </TableCell>
                     <TableCell className="text-sm">{r.assignee_name || '–'}</TableCell>
                     <TableCell className="text-xs text-slate-500">{fmtDateTimeTH(r.created_date)}</TableCell>

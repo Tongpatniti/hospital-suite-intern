@@ -7,7 +7,7 @@ import {
   HttpError,
   OPEN_EXCLUDED,
   STATUS_LABEL,
-  TARGET_ACTOR,
+  targetActors,
   TRANSITIONS,
   assetTypeOf,
   can,
@@ -21,6 +21,9 @@ import {
   visibleTypes,
   withTx,
 } from './repair_common';
+import { linkStatusAttachments, listAttachments } from './repair_attachments';
+import { applyStepData, listExternals, listParts } from './repair_steps';
+import { TICKET_COST_SQL } from './repair_history';
 
 // ===========================================================================
 // ระบบแจ้งซ่อม (design spec v1.3)
@@ -64,6 +67,10 @@ async function findOpenTickets(client: PoolClient | typeof mtpPool, assetId: num
     [assetId, OPEN_EXCLUDED]
   );
   return rows;
+}
+
+function canActAsAny(u: CurrentUser, actors: string[], ticket: { asset_type: AssetType; requester_id: number }) {
+  return actors.some((a) => canActAs(u, a, ticket));
 }
 
 function canActAs(u: CurrentUser, actor: string, ticket: { asset_type: AssetType; requester_id: number }) {
@@ -180,12 +187,12 @@ export function repairRoutes(app: Express) {
                 rq.firstname || ' ' || COALESCE(rq.lastname, '') AS requester_name,
                 asg.firstname || ' ' || COALESCE(asg.lastname, '') AS assignee_name,
                 ROUND((EXTRACT(EPOCH FROM (NOW() - t.status_entered_at)) / 3600)::NUMERIC, 1)::FLOAT AS hours_in_status,
-                sla.warn_after_hours::FLOAT AS warn_after_hours, sla.escalate_after_hours::FLOAT AS escalate_after_hours
+                sla.warn_after_hours::FLOAT AS warn_after_hours
            FROM repair_tickets t
            JOIN person rq ON rq.person_id = t.requester_id
            LEFT JOIN person asg ON asg.person_id = t.assignee_id
            LEFT JOIN LATERAL (
-             SELECT r.warn_after_hours, r.escalate_after_hours FROM repair_sla_rules r
+             SELECT r.warn_after_hours FROM repair_sla_rules r
               WHERE r.is_active AND r.status = t.status
                 AND (r.urgency IS NULL OR r.urgency = t.urgency)
                 AND (r.asset_type IS NULL OR r.asset_type = t.asset_type)
@@ -224,7 +231,7 @@ export function repairRoutes(app: Express) {
       const ticket = rows[0];
       if (!ticket) throw new HttpError(404, 'ไม่พบใบซ่อม');
 
-      const [history, watchers, alerts, evaluation, prev] = await Promise.all([
+      const [history, watchers, alerts, evaluation, prev, attachments, parts, externals] = await Promise.all([
         mtpPool.query(
           `SELECT h.*, p.firstname || ' ' || COALESCE(p.lastname, '') AS changed_by_name
              FROM repair_status_history h LEFT JOIN person p ON p.person_id = h.changed_by
@@ -237,7 +244,7 @@ export function repairRoutes(app: Express) {
             WHERE w.ticket_id = $1 ORDER BY w.created_at`,
           [ticket.ticket_id]
         ),
-        mtpPool.query(`SELECT * FROM repair_sla_alerts WHERE ticket_id = $1 ORDER BY sent_at DESC`, [ticket.ticket_id]),
+        mtpPool.query(`SELECT * FROM repair_sla_alerts WHERE ticket_id = $1 AND level = 1 ORDER BY sent_at DESC`, [ticket.ticket_id]),
         mtpPool.query(`SELECT * FROM repair_evaluations WHERE ticket_id = $1`, [ticket.ticket_id]),
         ticket.asset_id
           ? mtpPool.query(
@@ -247,10 +254,13 @@ export function repairRoutes(app: Express) {
               [ticket.asset_id, ticket.ticket_id]
             )
           : Promise.resolve({ rows: [] }),
+        listAttachments(ticket.ticket_id),
+        listParts(ticket.ticket_id),
+        listExternals(ticket.ticket_id),
       ]);
 
       const allowed = (TRANSITIONS[ticket.status] || []).filter((s) =>
-        canActAs(u, TARGET_ACTOR[s] || 'any', ticket)
+        canActAsAny(u, targetActors(ticket.status, s), ticket)
       );
 
       res.json({
@@ -262,6 +272,9 @@ export function repairRoutes(app: Express) {
           sla_alerts: alerts.rows,
           evaluation: evaluation.rows[0] || null,
           previous_repairs: prev.rows,
+          attachments,
+          parts,
+          externals,
           allowed_transitions: allowed.map((s) => ({ code: s, label: STATUS_LABEL[s] })),
           is_watching: watchers.rows.some((w) => w.person_id === u.person_id),
         },
@@ -367,9 +380,13 @@ export function repairRoutes(app: Express) {
         if (!(TRANSITIONS[t.status] || []).includes(toStatus)) {
           throw new HttpError(400, `เปลี่ยนจาก "${STATUS_LABEL[t.status]}" เป็น "${STATUS_LABEL[toStatus] || toStatus}" ไม่ได้`);
         }
-        if (!canActAs(u, TARGET_ACTOR[toStatus] || 'any', t)) throw new HttpError(403, 'คุณไม่มีสิทธิ์เปลี่ยนสถานะนี้');
+        if (!canActAsAny(u, targetActors(t.status, toStatus), t)) throw new HttpError(403, 'คุณไม่มีสิทธิ์เปลี่ยนสถานะนี้');
         if (toStatus === 'CANCELLED' && !remark) throw new HttpError(400, 'กรุณาระบุเหตุผลการยกเลิก');
         if (toStatus === 'DONE' && !remark) throw new HttpError(400, 'กรุณาระบุรายละเอียดการซ่อม');
+        if (toStatus === 'WAIT_EXTERNAL' && !remark) throw new HttpError(400, 'กรุณาระบุอาการ / เหตุผลที่ต้องส่งซ่อมภายนอก');
+        if (toStatus === 'IN_PROGRESS' && (t.status === 'DONE' || t.status === 'CLOSED') && !remark) {
+          throw new HttpError(400, 'กรุณาระบุเหตุผลที่ส่งกลับซ่อม');
+        }
 
         const sets: string[] = ['status = $1', 'status_entered_at = NOW()', 'modify_by = $2', 'modify_date = NOW()'];
         const vals: unknown[] = [toStatus, u.person_id];
@@ -387,14 +404,18 @@ export function repairRoutes(app: Express) {
           );
           metadata.assignee_id = u.person_id;
         }
-        if (toStatus === 'DONE') sets.push('done_date = NOW()');
+        // ผลการซ่อม: ช่างเลือกตอน "ซ่อมเสร็จ" (ผู้แจ้งไม่ต้องเลือกตอนปิดงาน)
+        if (toStatus === 'DONE') {
+          const cr = closeResult || 'REPAIRED';
+          if (!['REPAIRED', 'UNREPAIRABLE', 'NOT_FOUND'].includes(cr)) throw new HttpError(400, 'ผลการซ่อมไม่ถูกต้อง');
+          sets.push('done_date = NOW()', `close_result = $${vals.push(cr)}`);
+          metadata.close_result = cr;
+        }
         if (toStatus === 'CANCELLED') sets.push('cancelled_date = NOW()');
         if (toStatus === 'CLOSED') {
           const score = parseInt(String(req.body.score || ''), 10);
           if (!(score >= 1 && score <= 5)) throw new HttpError(400, 'กรุณาให้คะแนนความพึงพอใจ 1–5 ดาว');
-          const cr = closeResult || 'REPAIRED';
-          if (!['REPAIRED', 'UNREPAIRABLE', 'NOT_FOUND'].includes(cr)) throw new HttpError(400, 'ผลการปิดงานไม่ถูกต้อง');
-          sets.push('closed_date = NOW()', `close_result = $${vals.push(cr)}`);
+          sets.push('closed_date = NOW()', `close_result = COALESCE(close_result, 'REPAIRED')`);
           await client.query(
             `INSERT INTO repair_evaluations (ticket_id, score, comment, evaluated_by) VALUES ($1, $2, $3, $4)
              ON CONFLICT (ticket_id) DO UPDATE SET score = EXCLUDED.score, comment = EXCLUDED.comment,
@@ -402,7 +423,6 @@ export function repairRoutes(app: Express) {
             [t.ticket_id, score, req.body.comment || null, u.person_id]
           );
           metadata.score = score;
-          metadata.close_result = cr;
         }
         if (toStatus === 'IN_PROGRESS' && t.status === 'CLOSED') {
           sets.push('reopen_count = reopen_count + 1', 'closed_date = NULL', 'close_result = NULL');
@@ -410,18 +430,29 @@ export function repairRoutes(app: Express) {
         }
         if (toStatus === 'IN_PROGRESS' && t.status === 'PART_ARRIVED') metadata.event = 'PART_ISSUED';
         if (toStatus === 'IN_PROGRESS' && t.status === 'EXT_RECEIVED') metadata.event = 'EXT_INSPECTED';
+        if (toStatus === 'IN_PROGRESS' && t.status === 'DONE') sets.push('done_date = NULL', 'close_result = NULL');
+
+        // ข้อมูลประจำขั้น (ฟอร์มอะไหล่ / ส่งซ่อมภายนอก)
+        Object.assign(metadata, await applyStepData(client, t, toStatus, req.body, u.person_id));
+        if (toStatus === 'WAIT_EXTERNAL') sets.push(`is_warranty = $${vals.push(req.body.external?.is_warranty === true)}`);
 
         vals.push(t.ticket_id);
         const upd = await client.query(
           `UPDATE repair_tickets SET ${sets.join(', ')} WHERE ticket_id = $${vals.length} RETURNING *`,
           vals
         );
-        await client.query(
+        const hist = await client.query(
           `INSERT INTO repair_status_history (ticket_id, from_status, to_status, remark, metadata, changed_by, changed_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING history_id`,
           [t.ticket_id, t.status, toStatus, remark, Object.keys(metadata).length ? metadata : null, u.person_id,
            upd.rows[0].status_entered_at]
         );
+
+        // ไฟล์ที่อัปโหลดรอไว้สำหรับขั้นนี้ (ไม่บังคับ)
+        const ids: number[] = Array.isArray(req.body.attachment_ids)
+          ? req.body.attachment_ids.map(Number).filter((n: number) => Number.isInteger(n) && n > 0)
+          : [];
+        await linkStatusAttachments(client, t.ticket_id, u.person_id, hist.rows[0].history_id, ids);
 
         const reopenFromClosed = toStatus === 'IN_PROGRESS' && t.status === 'CLOSED';
         await syncAssetStatus(
@@ -431,7 +462,12 @@ export function repairRoutes(app: Express) {
           upd.rows[0].close_result
         );
 
-        await notify(client, await ticketRecipients(client, t.ticket_id, u.person_id), {
+        const recipients = await ticketRecipients(client, t.ticket_id, u.person_id);
+        // ส่งเรื่องให้พัสดุ
+        if (toStatus === 'WAIT_PART' || toStatus === 'WAIT_EXTERNAL') {
+          recipients.push(...(await personsWithPermission(client, 'repair.supply')).filter((id) => id !== u.person_id));
+        }
+        await notify(client, recipients, {
           ticket_id: t.ticket_id,
           type: 'STATUS_CHANGED',
           title: `${t.ticket_no}: ${STATUS_LABEL[toStatus]}`,
@@ -535,7 +571,8 @@ export function repairRoutes(app: Express) {
         mtpPool.query('SELECT * FROM v_asset_repair_summary WHERE asset_id = $1', [id]),
         mtpPool.query(
           `SELECT t.ticket_id, t.ticket_no, t.title, t.description, t.status, t.close_result, t.created_date, t.closed_date,
-                  asg.firstname || ' ' || COALESCE(asg.lastname, '') AS assignee_name, ev.score
+                  asg.firstname || ' ' || COALESCE(asg.lastname, '') AS assignee_name, ev.score,
+                  ${TICKET_COST_SQL} AS total_cost
              FROM repair_tickets t
              LEFT JOIN person asg ON asg.person_id = t.assignee_id
              LEFT JOIN repair_evaluations ev ON ev.ticket_id = t.ticket_id
@@ -559,7 +596,11 @@ export function repairRoutes(app: Express) {
         success: true,
         data: {
           asset: { ...asset.rows[0], asset_type: assetTypeOf(asset.rows[0].equipment_type_id) },
-          summary: { ...s, mtbf_days: mtbf, total_cost: null },
+          summary: {
+            ...s,
+            mtbf_days: mtbf,
+            total_cost: tickets.rows.filter((r) => r.status !== 'CANCELLED').reduce((a, r) => a + (Number(r.total_cost) || 0), 0),
+          },
           replace_suggestion: s.repair_count_12m >= Number(count12)
             ? { reason: `ซ่อม ${s.repair_count_12m} ครั้งใน 12 เดือน (เกณฑ์ ${count12} ครั้ง)`, cost_pct_threshold: Number(costPct) }
             : null,
@@ -621,7 +662,7 @@ export function repairRoutes(app: Express) {
     try {
       await requireUser(req);
       const { rows } = await mtpPool.query(
-        `SELECT *, warn_after_hours::FLOAT AS warn_after_hours, escalate_after_hours::FLOAT AS escalate_after_hours
+        `SELECT sla_rule_id, status, urgency, asset_type, warn_after_hours::FLOAT AS warn_after_hours, is_active
            FROM repair_sla_rules ORDER BY sla_rule_id`
       );
       res.json({ success: true, data: rows });
@@ -637,15 +678,12 @@ export function repairRoutes(app: Express) {
       const reason = String(req.body.reason || '').trim();
       if (!reason) throw new HttpError(400, 'กรุณาระบุเหตุผลการแก้ไข');
       const warn = Number(req.body.warn_after_hours);
-      const esc = req.body.escalate_after_hours === null || req.body.escalate_after_hours === '' ? null : Number(req.body.escalate_after_hours);
       if (!(warn > 0)) throw new HttpError(400, 'เวลาเตือนต้องมากกว่า 0 ชั่วโมง');
-      if (esc !== null && !(esc > warn)) throw new HttpError(400, 'เวลาส่งต่อหัวหน้าต้องมากกว่าเวลาเตือน');
       const row = await withTx({ userId: u.person_id, reason, ip: clientIp(req) }, async (client) => {
         const upd = await client.query(
-          `UPDATE repair_sla_rules SET warn_after_hours = $1, escalate_after_hours = $2, is_active = $3,
-                  modify_by = $4, modify_date = NOW()
-            WHERE sla_rule_id = $5 RETURNING *`,
-          [warn, esc, req.body.is_active !== false, u.person_id, req.params.id]
+          `UPDATE repair_sla_rules SET warn_after_hours = $1, is_active = $2, modify_by = $3, modify_date = NOW()
+            WHERE sla_rule_id = $4 RETURNING *`,
+          [warn, req.body.is_active !== false, u.person_id, req.params.id]
         );
         if (upd.rows.length === 0) throw new HttpError(404, 'ไม่พบกฎ SLA');
         return upd.rows[0];

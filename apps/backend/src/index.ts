@@ -4,6 +4,9 @@ import db from './db';
 import { authRoutes } from './auth';
 import { trainingItemsRoutes } from './modules/training_items';
 import { repairRoutes } from './modules/repair';
+import { repairAttachmentRoutes } from './modules/repair_attachments';
+import { repairStepRoutes } from './modules/repair_steps';
+import { repairHistoryRoutes } from './modules/repair_history';
 import { runSlaScan, startSlaScheduler } from './modules/repair_sla';
 import { can, getCurrentUser } from './modules/repair_common';
 
@@ -31,6 +34,9 @@ app.get('/api/health', async (_req, res) => {
 authRoutes(app);
 trainingItemsRoutes(app);
 repairRoutes(app);
+repairAttachmentRoutes(app);
+repairStepRoutes(app);
+repairHistoryRoutes(app);
 
 // สั่งตรวจงานค้างทันที (สำหรับทดสอบ) — ต้องมีสิทธิ์ repair.settings
 app.post('/api/repair-sla/run', async (req, res) => {

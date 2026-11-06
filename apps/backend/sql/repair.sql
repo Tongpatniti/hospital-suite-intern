@@ -104,6 +104,159 @@ CREATE TABLE IF NOT EXISTS repair_assignments (
 );
 
 -- ---------------------------------------------------------------------------
+-- 6.10 repair_attachments (ไฟล์เก็บบนดิสก์ใน UPLOAD_DIR; ตารางเก็บเฉพาะข้อมูลไฟล์)
+--   reference_type = 'STATUS' และ reference_id IS NULL = อัปโหลดไว้แล้วแต่ยังไม่ผูกกับการเปลี่ยนสถานะ
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS repair_attachments (
+  attachment_id  SERIAL PRIMARY KEY,
+  ticket_id      INTEGER NOT NULL REFERENCES repair_tickets(ticket_id) ON DELETE CASCADE,
+  reference_type VARCHAR(20) NOT NULL DEFAULT 'TICKET'
+                 CHECK (reference_type IN ('TICKET', 'STATUS', 'PART', 'QUOTATION', 'EXTERNAL', 'EVALUATION')),
+  reference_id   INTEGER,
+  file_kind      VARCHAR(10) NOT NULL CHECK (file_kind IN ('IMAGE', 'PDF')),
+  file_name      VARCHAR(255) NOT NULL,
+  stored_name    VARCHAR(120) NOT NULL,
+  thumbnail_name VARCHAR(120),
+  mime_type      VARCHAR(100) NOT NULL,
+  original_size  INTEGER,
+  file_size      INTEGER NOT NULL,
+  width          INTEGER,
+  height         INTEGER,
+  sha256         CHAR(64) NOT NULL,
+  uploaded_by    INTEGER REFERENCES person(person_id),
+  uploaded_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_by     INTEGER REFERENCES person(person_id),
+  deleted_at     TIMESTAMPTZ
+);
+-- ถ้าฐานข้อมูลมีตาราง repair_attachments อยู่ก่อนแล้ว (CREATE ข้างบนจะถูกข้าม) ให้เติมคอลัมน์ที่ขาด
+ALTER TABLE repair_attachments ADD COLUMN IF NOT EXISTS reference_type VARCHAR(20) NOT NULL DEFAULT 'TICKET';
+ALTER TABLE repair_attachments ADD COLUMN IF NOT EXISTS reference_id   INTEGER;
+ALTER TABLE repair_attachments ADD COLUMN IF NOT EXISTS file_kind      VARCHAR(10) NOT NULL DEFAULT 'IMAGE';
+ALTER TABLE repair_attachments ADD COLUMN IF NOT EXISTS file_name      VARCHAR(255) NOT NULL DEFAULT 'file';
+ALTER TABLE repair_attachments ADD COLUMN IF NOT EXISTS stored_name    VARCHAR(120) NOT NULL DEFAULT '';
+ALTER TABLE repair_attachments ADD COLUMN IF NOT EXISTS thumbnail_name VARCHAR(120);
+ALTER TABLE repair_attachments ADD COLUMN IF NOT EXISTS mime_type      VARCHAR(100) NOT NULL DEFAULT 'application/octet-stream';
+ALTER TABLE repair_attachments ADD COLUMN IF NOT EXISTS original_size  INTEGER;
+ALTER TABLE repair_attachments ADD COLUMN IF NOT EXISTS file_size      INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE repair_attachments ADD COLUMN IF NOT EXISTS width          INTEGER;
+ALTER TABLE repair_attachments ADD COLUMN IF NOT EXISTS height         INTEGER;
+ALTER TABLE repair_attachments ADD COLUMN IF NOT EXISTS sha256         CHAR(64);
+ALTER TABLE repair_attachments ADD COLUMN IF NOT EXISTS uploaded_by    INTEGER REFERENCES person(person_id);
+ALTER TABLE repair_attachments ADD COLUMN IF NOT EXISTS uploaded_at    TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE repair_attachments ADD COLUMN IF NOT EXISTS deleted_by     INTEGER REFERENCES person(person_id);
+ALTER TABLE repair_attachments ADD COLUMN IF NOT EXISTS deleted_at     TIMESTAMPTZ;
+-- คอลัมน์เก่าจากโครงสร้างเดิม (เช่น file_path) ที่บังคับ NOT NULL จะทำให้ INSERT ไม่ผ่าน — ปลดออก
+DO $$
+DECLARE c RECORD;
+BEGIN
+  FOR c IN SELECT column_name FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'repair_attachments' AND is_nullable = 'NO'
+              AND column_default IS NULL
+              AND column_name NOT IN ('attachment_id', 'ticket_id', 'file_kind', 'file_name', 'stored_name',
+                                      'mime_type', 'file_size', 'reference_type', 'uploaded_at')
+  LOOP
+    EXECUTE format('ALTER TABLE repair_attachments ALTER COLUMN %I DROP NOT NULL', c.column_name);
+  END LOOP;
+END $$;
+
+CREATE INDEX IF NOT EXISTS ix_repair_attachments_ticket ON repair_attachments (ticket_id) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_repair_attachments_dedupe
+  ON repair_attachments (ticket_id, sha256) WHERE deleted_at IS NULL;
+
+-- ---------------------------------------------------------------------------
+-- 6.4 repair_parts — ช่างกรอกรายการที่ต้องการ, พัสดุใส่ราคาจริง
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS repair_parts (
+  part_id              SERIAL PRIMARY KEY,
+  ticket_id            INTEGER NOT NULL REFERENCES repair_tickets(ticket_id) ON DELETE CASCADE,
+  history_id           INTEGER REFERENCES repair_status_history(history_id) ON DELETE SET NULL,
+  part_name            VARCHAR(255) NOT NULL,
+  part_no              VARCHAR(100),
+  qty                  NUMERIC(10, 2) NOT NULL DEFAULT 1 CHECK (qty > 0),
+  unit                 VARCHAR(30),
+  estimated_unit_price NUMERIC(12, 2),
+  actual_unit_price    NUMERIC(12, 2),
+  note                 TEXT,
+  status               VARCHAR(20) NOT NULL DEFAULT 'REQUESTED',
+  requested_by         INTEGER REFERENCES person(person_id),
+  requested_date       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  modify_by            INTEGER REFERENCES person(person_id),
+  modify_date          TIMESTAMPTZ
+);
+-- ถ้ามีตาราง repair_parts อยู่ก่อนแล้ว (โครงสร้างต่างจากนี้) ให้เติมคอลัมน์ที่ขาด
+ALTER TABLE repair_parts ADD COLUMN IF NOT EXISTS history_id           INTEGER;
+ALTER TABLE repair_parts ADD COLUMN IF NOT EXISTS part_name            VARCHAR(255) NOT NULL DEFAULT '';
+ALTER TABLE repair_parts ADD COLUMN IF NOT EXISTS part_no              VARCHAR(100);
+ALTER TABLE repair_parts ADD COLUMN IF NOT EXISTS qty                  NUMERIC(10, 2) NOT NULL DEFAULT 1;
+ALTER TABLE repair_parts ADD COLUMN IF NOT EXISTS unit                 VARCHAR(30);
+ALTER TABLE repair_parts ADD COLUMN IF NOT EXISTS estimated_unit_price NUMERIC(12, 2);
+ALTER TABLE repair_parts ADD COLUMN IF NOT EXISTS actual_unit_price    NUMERIC(12, 2);
+ALTER TABLE repair_parts ADD COLUMN IF NOT EXISTS note                 TEXT;
+ALTER TABLE repair_parts ADD COLUMN IF NOT EXISTS status               VARCHAR(20) NOT NULL DEFAULT 'REQUESTED';
+ALTER TABLE repair_parts ADD COLUMN IF NOT EXISTS requested_by         INTEGER;
+ALTER TABLE repair_parts ADD COLUMN IF NOT EXISTS requested_date       TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE repair_parts ADD COLUMN IF NOT EXISTS modify_by            INTEGER;
+ALTER TABLE repair_parts ADD COLUMN IF NOT EXISTS modify_date          TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS ix_repair_parts_ticket ON repair_parts (ticket_id);
+
+-- ---------------------------------------------------------------------------
+-- 6.5 repair_externals (แบบย่อ: ชื่อร้านเป็นข้อความ เพราะฐานฝึกงานไม่มี organizations)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS repair_externals (
+  external_id      SERIAL PRIMARY KEY,
+  ticket_id        INTEGER NOT NULL REFERENCES repair_tickets(ticket_id) ON DELETE CASCADE,
+  status           VARCHAR(20) NOT NULL DEFAULT 'REQUESTED',  -- REQUESTED | SENT | RETURNED
+  is_warranty      BOOLEAN NOT NULL DEFAULT FALSE,
+  reason           TEXT,
+  suggested_vendor VARCHAR(255),
+  requested_by     INTEGER REFERENCES person(person_id),
+  requested_date   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  vendor_name      VARCHAR(255),
+  sent_date        DATE,
+  sent_by          INTEGER REFERENCES person(person_id),
+  return_date      DATE,
+  actual_cost      NUMERIC(12, 2),
+  invoice_no       VARCHAR(100),
+  received_by      INTEGER REFERENCES person(person_id)
+);
+-- ถ้ามีตาราง repair_externals อยู่ก่อนแล้ว (เช่น ตามแบบ v1.2 ที่ใช้ suggested_org_id) ให้เติมคอลัมน์ที่ขาด
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS status           VARCHAR(20) NOT NULL DEFAULT 'REQUESTED';
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS is_warranty      BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS reason           TEXT;
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS suggested_vendor VARCHAR(255);
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS requested_by     INTEGER;
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS requested_date   TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS vendor_name      VARCHAR(255);
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS sent_date        DATE;
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS sent_by          INTEGER;
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS return_date      DATE;
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS actual_cost      NUMERIC(12, 2);
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS invoice_no       VARCHAR(100);
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS received_by      INTEGER;
+CREATE INDEX IF NOT EXISTS ix_repair_externals_ticket ON repair_externals (ticket_id);
+
+-- คอลัมน์เก่าที่บังคับ NOT NULL แต่ระบบนี้ไม่ได้ใส่ค่า (เช่น suggested_org_id) จะทำให้ INSERT ไม่ผ่าน — ปลดออก
+-- รวมถึงลบ CHECK ของ status เดิมที่ไม่มีค่าที่ระบบนี้ใช้
+DO $$
+DECLARE c RECORD;
+BEGIN
+  FOR c IN SELECT table_name, column_name FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name IN ('repair_parts', 'repair_externals')
+              AND is_nullable = 'NO' AND column_default IS NULL
+              AND column_name NOT IN ('part_id', 'external_id', 'ticket_id', 'part_name')
+  LOOP
+    EXECUTE format('ALTER TABLE %I ALTER COLUMN %I DROP NOT NULL', c.table_name, c.column_name);
+  END LOOP;
+  FOR c IN SELECT con.conname, rel.relname FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid
+            WHERE rel.relname IN ('repair_parts', 'repair_externals') AND con.contype = 'c'
+              AND pg_get_constraintdef(con.oid) ILIKE '%status%'
+  LOOP
+    EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', c.relname, c.conname);
+  END LOOP;
+END $$;
+
+-- ---------------------------------------------------------------------------
 -- 6.11 repair_evaluations
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS repair_evaluations (
@@ -177,19 +330,20 @@ CREATE TABLE IF NOT EXISTS repair_sla_rules (
 CREATE UNIQUE INDEX IF NOT EXISTS ux_repair_sla_rules_scope
   ON repair_sla_rules (status, COALESCE(urgency, '*'), COALESCE(asset_type, '*'));
 
-INSERT INTO repair_sla_rules (status, urgency, warn_after_hours, escalate_after_hours, notify_requester, notify_current_actor, notify_prev_actor, escalate_permission) VALUES
-  ('NEW',           NULL,       24,  48,  TRUE,  TRUE, FALSE, 'repair.lead'),
-  ('NEW',           'CRITICAL', 2,   4,   TRUE,  TRUE, FALSE, 'repair.lead'),
-  ('ACCEPTED',      NULL,       24,  NULL, TRUE, TRUE, FALSE, NULL),
-  ('IN_PROGRESS',   NULL,       72,  120, FALSE, TRUE, FALSE, 'repair.lead'),
-  ('WAIT_PART',     NULL,       24,  NULL, FALSE, TRUE, TRUE, NULL),
-  ('WAIT_EXTERNAL', NULL,       24,  NULL, FALSE, TRUE, TRUE, NULL),
-  ('PART_APPROVAL', NULL,       72,  120, FALSE, TRUE, TRUE, 'repair.supply'),
-  ('EXT_APPROVAL',  NULL,       72,  120, FALSE, TRUE, TRUE, 'repair.supply'),
-  ('PART_ARRIVED',  NULL,       24,  NULL, FALSE, TRUE, TRUE, NULL),
-  ('EXT_RECEIVED',  NULL,       24,  NULL, FALSE, TRUE, TRUE, NULL),
-  ('EXT_SENT',      NULL,       336, 720, TRUE,  TRUE, FALSE, 'repair.supply'),
-  ('DONE',          NULL,       72,  NULL, TRUE, FALSE, FALSE, NULL)
+-- แจ้งเตือนเมื่อเกินเวลาเท่านั้น (ไม่มีการส่งต่อหัวหน้า — คอลัมน์ escalate_* เก็บไว้แต่ไม่ใช้)
+INSERT INTO repair_sla_rules (status, urgency, warn_after_hours, notify_requester, notify_current_actor, notify_prev_actor) VALUES
+  ('NEW',           NULL,       24,  TRUE,  TRUE, FALSE),
+  ('NEW',           'CRITICAL', 2,   TRUE,  TRUE, FALSE),
+  ('ACCEPTED',      NULL,       24,  TRUE,  TRUE, FALSE),
+  ('IN_PROGRESS',   NULL,       72,  FALSE, TRUE, FALSE),
+  ('WAIT_PART',     NULL,       24,  FALSE, TRUE, TRUE),
+  ('WAIT_EXTERNAL', NULL,       24,  FALSE, TRUE, TRUE),
+  ('PART_APPROVAL', NULL,       72,  FALSE, TRUE, TRUE),
+  ('EXT_APPROVAL',  NULL,       72,  FALSE, TRUE, TRUE),
+  ('PART_ARRIVED',  NULL,       24,  FALSE, TRUE, TRUE),
+  ('EXT_RECEIVED',  NULL,       24,  FALSE, TRUE, TRUE),
+  ('EXT_SENT',      NULL,       336, TRUE,  TRUE, FALSE),
+  ('DONE',          NULL,       72,  TRUE,  FALSE, FALSE)
 ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS repair_sla_alerts (
@@ -308,6 +462,21 @@ CREATE TRIGGER trg_audit_repair_sla_rules AFTER INSERT OR UPDATE OR DELETE ON re
   FOR EACH ROW EXECUTE FUNCTION repair_audit_trigger('sla_rule_id', 'reason',
     'status', 'urgency', 'asset_type', 'warn_after_hours', 'escalate_after_hours',
     'notify_requester', 'notify_current_actor', 'notify_prev_actor', 'escalate_permission', 'is_active');
+
+-- ยกเลิกการส่งต่อหัวหน้าในกฎ SLA ที่มีอยู่ก่อน (บันทึกลง audit log พร้อมเหตุผล)
+SELECT set_config('app.reason', 'ยกเลิกการส่งต่อหัวหน้า (ระบบ)', false);
+UPDATE repair_sla_rules SET escalate_after_hours = NULL, escalate_permission = NULL
+ WHERE escalate_after_hours IS NOT NULL OR escalate_permission IS NOT NULL;
+SELECT set_config('app.reason', '', false);
+
+-- ราคาอะไหล่และค่าซ่อมภายนอก (เกี่ยวกับเงิน — บังคับเหตุผลเมื่อแก้)
+DROP TRIGGER IF EXISTS trg_audit_repair_parts ON repair_parts;
+CREATE TRIGGER trg_audit_repair_parts AFTER UPDATE ON repair_parts
+  FOR EACH ROW EXECUTE FUNCTION repair_audit_trigger('part_id', 'reason', 'qty', 'estimated_unit_price', 'actual_unit_price');
+
+DROP TRIGGER IF EXISTS trg_audit_repair_externals ON repair_externals;
+CREATE TRIGGER trg_audit_repair_externals AFTER UPDATE ON repair_externals
+  FOR EACH ROW EXECUTE FUNCTION repair_audit_trigger('external_id', 'none', 'vendor_name', 'actual_cost', 'invoice_no');
 
 -- สถานะครุภัณฑ์ที่ระบบซ่อมเปลี่ยน (ไม่บังคับ reason แต่ application ใส่เลขใบซ่อมให้)
 DROP TRIGGER IF EXISTS trg_audit_assets_status ON assets;

@@ -62,11 +62,10 @@ export function fmtHours(h: number) {
   return h >= 48 ? `${(h / 24).toFixed(1)} วัน` : `${Math.floor(h)} ชม.`;
 }
 
-export type SlaLevel = 'ok' | 'near' | 'over' | 'escalated' | 'none';
+export type SlaLevel = 'ok' | 'near' | 'over' | 'none';
 
-export function slaLevel(hours: number, warn: number | null, esc: number | null): SlaLevel {
+export function slaLevel(hours: number, warn: number | null): SlaLevel {
   if (!warn) return 'none';
-  if (esc && hours >= esc) return 'escalated';
   if (hours >= warn) return 'over';
   if (hours >= warn * 0.8) return 'near';
   return 'ok';

@@ -20,6 +20,11 @@ import {
 } from '../lib/repair';
 import { fmtDateTimeTH } from '../lib/format';
 import { StatusPill } from '../components/RepairBadges';
+import { AttachmentGallery, AttachmentPicker, type Attachment } from '../components/Attachments';
+import { uploadPrepared, type PreparedFile } from '../lib/upload';
+import { useAuth } from '../contexts/AuthContext';
+import { ExternalFields, ExternalSummary, PartsForm, PartsTable, type External, type Part } from '../components/StepForms';
+import { emptyExternal, emptyPart, filledParts, partsReady, type ExternalForm, type PartRow } from '../lib/stepForms';
 
 interface History {
   history_id: number;
@@ -61,6 +66,46 @@ interface Ticket {
   previous_repairs: { ticket_id: number; ticket_no: string; title: string; description: string | null; created_date: string; status: string }[];
   allowed_transitions: { code: string; label: string }[];
   is_watching: boolean;
+  attachments: Attachment[];
+  requester_id: number;
+  close_result: string | null;
+  parts: Part[];
+  externals: External[];
+}
+
+type ActionKind = 'confirm' | 'cancel' | 'done' | 'close' | 'sendBack' | 'parts' | 'extRequest' | 'extSend' | 'extReceive';
+
+// ขั้นไหนต้องกรอกอะไรเพิ่ม — ที่เหลือมีแค่ปุ่มยืนยัน/ยกเลิก
+function actionKind(from: string, to: string): ActionKind {
+  if (to === 'CANCELLED') return 'cancel';
+  if (to === 'DONE') return 'done';
+  if (to === 'CLOSED') return 'close';
+  if (to === 'IN_PROGRESS' && (from === 'DONE' || from === 'CLOSED')) return 'sendBack';
+  if (to === 'WAIT_PART') return 'parts';
+  if (to === 'WAIT_EXTERNAL') return 'extRequest';
+  if (to === 'EXT_SENT') return 'extSend';
+  if (to === 'EXT_RECEIVED') return 'extReceive';
+  return 'confirm';
+}
+
+function actionLabel(from: string, to: string, fallback: string, isRequesterSide: boolean) {
+  if (to === 'CANCELLED') return 'ยกเลิกใบซ่อม';
+  if (to === 'IN_PROGRESS' && from === 'CLOSED') return 'เปิดงานอีกครั้ง';
+  if (to === 'IN_PROGRESS' && from === 'DONE') return isRequesterSide ? 'ไม่ผ่าน ส่งกลับซ่อม' : 'ส่งกลับซ่อมอีกครั้ง';
+  if (to === 'WAIT_PART') return 'สั่งซื้ออะไหล่';
+  if (to === 'WAIT_EXTERNAL') return 'ส่งเรื่องซ่อมภายนอก';
+  if (to === 'PART_APPROVAL') return 'พัสดุรับเรื่องอะไหล่';
+  if (to === 'PART_PURCHASING') return 'อนุมัติ เริ่มจัดซื้อ';
+  if (to === 'PART_ARRIVED') return 'อะไหล่ถึงคลังแล้ว';
+  if (to === 'EXT_APPROVAL') return 'พัสดุรับเรื่องส่งซ่อม';
+  if (to === 'EXT_SENT') return 'ส่งร้านภายนอกแล้ว';
+  if (to === 'EXT_RECEIVED') return 'รับเครื่องคืนแล้ว';
+  if (to === 'IN_PROGRESS' && from === 'PART_ARRIVED') return 'รับอะไหล่แล้ว ซ่อมต่อ';
+  if (to === 'IN_PROGRESS' && from === 'EXT_RECEIVED') return 'ตรวจรับเครื่องแล้ว ซ่อมต่อ';
+  if (to === 'IN_PROGRESS') return 'เริ่มดำเนินงาน';
+  if (to === 'CLOSED') return 'ตรวจรับและปิดงาน';
+  if (to === 'DONE') return 'ซ่อมเสร็จ';
+  return fallback;
 }
 
 type TimelineItem =
@@ -75,6 +120,13 @@ const RepairDetail: React.FC = () => {
   const [score, setScore] = useState(5);
   const [closeResult, setCloseResult] = useState('REPAIRED');
   const [saving, setSaving] = useState(false);
+  const [stepFiles, setStepFiles] = useState<PreparedFile[]>([]);
+  const [extraFiles, setExtraFiles] = useState<PreparedFile[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [partRows, setPartRows] = useState<PartRow[]>([emptyPart()]);
+  const [extForm, setExtForm] = useState<ExternalForm>(emptyExternal());
+  const { user, hasPermission } = useAuth();
+  const myId = Number(user?.id);
 
   const load = useCallback(async () => {
     try {
@@ -92,26 +144,76 @@ const RepairDetail: React.FC = () => {
     setRemark('');
     setScore(5);
     setCloseResult('REPAIRED');
+    setStepFiles([]);
+    setPartRows([emptyPart()]);
+    setExtForm(emptyExternal());
   };
 
   const submitAction = async () => {
     if (!action || !t) return;
     setSaving(true);
+    let uploadedIds: number[] = []; // รูปของขั้นนี้
+    const allUploaded: number[] = []; // ทุกไฟล์ที่อัปโหลดในรอบนี้ (ไว้ลบถ้าล้มเหลว)
     try {
+      if (stepFiles.length > 0) {
+        const up = await uploadPrepared(t.ticket_id, stepFiles, 'STATUS');
+        uploadedIds = up.ids;
+        allUploaded.push(...up.ids);
+        if (up.errors.length > 0) throw new Error(up.errors.join('\n'));
+      }
+      // รูปของแต่ละรายการอะไหล่
+      let parts: Record<string, unknown>[] | undefined;
+      if (action.code === 'WAIT_PART') {
+        parts = [];
+        for (const r of filledParts(partRows)) {
+          const up = await uploadPrepared(t.ticket_id, r.files, 'PART');
+          allUploaded.push(...up.ids);
+          if (up.errors.length > 0) throw new Error(up.errors.join('\n'));
+          parts.push({
+            part_name: r.part_name.trim(), part_no: r.part_no.trim(), qty: Number(r.qty), unit: r.unit.trim(),
+            estimated_unit_price: r.estimated_unit_price === '' ? null : Number(r.estimated_unit_price), note: r.note.trim(),
+            attachment_ids: up.ids,
+          });
+        }
+      }
       await api.patch(`/api/repairs/${t.ticket_id}/status`, {
         to_status: action.code,
         remark,
         score: action.code === 'CLOSED' ? score : undefined,
-        close_result: action.code === 'CLOSED' ? closeResult : undefined,
+        comment: action.code === 'CLOSED' ? remark : undefined,
+        close_result: action.code === 'DONE' ? closeResult : undefined,
+        attachment_ids: uploadedIds,
+        parts,
+        external: ['WAIT_EXTERNAL', 'EXT_SENT', 'EXT_RECEIVED'].includes(action.code)
+          ? {
+              ...extForm,
+              sent_date: extForm.sent_date || null,
+              return_date: extForm.return_date || null,
+              actual_cost: extForm.actual_cost === '' ? null : Number(extForm.actual_cost),
+            }
+          : undefined,
       });
       toast({ title: `เปลี่ยนสถานะเป็น "${STATUS_LABEL[action.code]}" แล้ว` });
       setAction(null);
       load();
     } catch (err) {
-      toast({ title: errorMessage(err, 'เปลี่ยนสถานะไม่สำเร็จ'), variant: 'destructive' });
+      // เปลี่ยนสถานะไม่สำเร็จ — ลบไฟล์ที่เพิ่งอัปโหลดไว้สำหรับขั้นนี้ ไม่ให้ค้าง
+      await Promise.all(allUploaded.map((id) => api.delete(`/api/repairs/${t.ticket_id}/attachments/${id}`).catch(() => undefined)));
+      toast({ title: errorMessage(err, (err as Error).message || 'เปลี่ยนสถานะไม่สำเร็จ'), variant: 'destructive' });
     } finally {
       setSaving(false);
     }
+  };
+
+  const uploadExtra = async () => {
+    if (!t || extraFiles.length === 0) return;
+    setUploading(true);
+    const up = await uploadPrepared(t.ticket_id, extraFiles, 'TICKET');
+    setUploading(false);
+    if (up.errors.length) toast({ title: 'แนบไฟล์ไม่สำเร็จบางไฟล์', description: up.errors.join('\n'), variant: 'destructive' });
+    else toast({ title: `แนบไฟล์ ${up.ids.length} ไฟล์แล้ว` });
+    setExtraFiles([]);
+    load();
   };
 
   const toggleWatch = async () => {
@@ -132,7 +234,21 @@ const RepairDetail: React.FC = () => {
     ...t.sla_alerts.map((a) => ({ kind: 'alert' as const, at: a.sent_at, a })),
   ].sort((x, y) => new Date(y.at).getTime() - new Date(x.at).getTime());
 
-  const needRemark = ['CANCELLED', 'DONE'].includes(action?.code || '');
+  const kind: ActionKind = action ? actionKind(t.status, action.code) : 'confirm';
+  const needRemark = kind === 'cancel' || kind === 'done' || kind === 'sendBack' || kind === 'extRequest';
+  const canSubmit = !saving
+    && (!needRemark || remark.trim() !== '')
+    && (kind !== 'parts' || partsReady(partRows))
+    && (kind !== 'extSend' || (extForm.vendor_name.trim() !== '' && extForm.sent_date !== ''))
+    && (kind !== 'extReceive' || extForm.return_date !== '');
+  const showFiles = kind === 'done' || kind === 'extRequest'; // อะไหล่แนบรูปแยกในแต่ละรายการ
+  const isTechSide = hasPermission(`repair.${t.asset_type.toLowerCase()}.tech`) || hasPermission('repair.all');
+  const isRequesterSide = t.requester_id === myId && !isTechSide;
+  const label = (code: string, fallback: string) => actionLabel(t.status, code, fallback, isRequesterSide);
+  const isOpen = !['CLOSED', 'CANCELLED'].includes(t.status);
+  const stepFilesOf = (historyId: number) =>
+    t.attachments.filter((a) => a.reference_type === 'STATUS' && a.reference_id === historyId);
+  const ticketFiles = t.attachments.filter((a) => a.reference_type !== 'STATUS' && a.reference_type !== 'PART');
 
   return (
     <div className="space-y-4">
@@ -154,9 +270,9 @@ const RepairDetail: React.FC = () => {
               key={a.code}
               variant={a.code === 'CANCELLED' ? 'outline' : 'default'}
               className={a.code === 'CANCELLED' ? 'text-red-600' : 'bg-teal-700 hover:bg-teal-800'}
-              onClick={() => openAction(a)}
+              onClick={() => openAction({ code: a.code, label: label(a.code, a.label) })}
             >
-              {a.code === 'IN_PROGRESS' && t.status === 'CLOSED' ? 'เปิดงานอีกครั้ง' : a.label}
+              {label(a.code, a.label)}
             </Button>
           ))}
         </div>
@@ -174,7 +290,7 @@ const RepairDetail: React.FC = () => {
                     <li key={`a${a.alert_id}`} className="relative border-l-2 border-red-200 pl-4">
                       <span className="absolute -left-[7px] top-1.5 h-3 w-3 rounded-full bg-red-500" />
                       <p className="font-semibold text-red-700">
-                        {a.level === 2 ? 'ส่งต่อหัวหน้า (งานค้างเกินเวลา)' : 'แจ้งเตือนงานค้างเกินเวลา'}
+                        แจ้งเตือนงานค้างเกินเวลา
                       </p>
                       <p className="text-xs text-slate-500">
                         {fmtDateTimeTH(a.sent_at)} · "{STATUS_LABEL[a.status]}" เกินกำหนด {fmtHours(Number(a.hours_overdue))} · ส่งถึง {a.recipients.length} คน
@@ -195,6 +311,11 @@ const RepairDetail: React.FC = () => {
                       {h.metadata?.close_result && ` · ${CLOSE_RESULT_LABEL[h.metadata.close_result]}`}
                     </p>
                     {h.remark && <p className="mt-1 text-sm text-slate-700">{h.remark}</p>}
+                    {stepFilesOf(h.history_id).length > 0 && (
+                      <div className="mt-2 max-w-md">
+                        <AttachmentGallery ticketId={t.ticket_id} items={stepFilesOf(h.history_id)} compact />
+                      </div>
+                    )}
                   </li>
                 );
               })}
@@ -203,6 +324,45 @@ const RepairDetail: React.FC = () => {
         </Card>
 
         <div className="space-y-4">
+          {t.parts.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle className="text-base">รายการอะไหล่ที่ขอซื้อ</CardTitle></CardHeader>
+              <CardContent>
+                <PartsTable
+                  ticketId={t.ticket_id}
+                  parts={t.parts}
+                  attachments={t.attachments}
+                  canEditPrice={hasPermission('repair.supply') && ['WAIT_PART', 'PART_APPROVAL', 'PART_PURCHASING', 'PART_ARRIVED'].includes(t.status)}
+                  onSaved={load}
+                />
+              </CardContent>
+            </Card>
+          )}
+
+          {t.externals.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle className="text-base">ส่งซ่อมภายนอก</CardTitle></CardHeader>
+              <CardContent><ExternalSummary items={t.externals} /></CardContent>
+            </Card>
+          )}
+
+          <Card>
+            <CardHeader><CardTitle className="text-base">ไฟล์แนบ ({ticketFiles.length})</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <AttachmentGallery ticketId={t.ticket_id} items={ticketFiles} currentPersonId={myId} canDelete={isOpen} onDeleted={load} />
+              {isOpen && (
+                <>
+                  <AttachmentPicker files={extraFiles} onChange={setExtraFiles} />
+                  {extraFiles.length > 0 && (
+                    <Button onClick={uploadExtra} disabled={uploading} className="w-full bg-teal-700 hover:bg-teal-800">
+                      {uploading ? 'กำลังอัปโหลด...' : `แนบ ${extraFiles.length} ไฟล์`}
+                    </Button>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader><CardTitle className="text-base">ข้อมูลครุภัณฑ์ ณ วันที่แจ้ง</CardTitle></CardHeader>
             <CardContent>
@@ -269,10 +429,16 @@ const RepairDetail: React.FC = () => {
       </div>
 
       <Dialog open={!!action} onOpenChange={(o) => !o && setAction(null)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>{action?.label}</DialogTitle></DialogHeader>
-          <div className="space-y-3 py-2">
-            {action?.code === 'CLOSED' && (
+        <DialogContent className={kind === 'parts' ? 'sm:max-w-3xl' : 'sm:max-w-lg'}>
+          <DialogHeader><DialogTitle>{kind === 'confirm' ? 'ยืนยันเปลี่ยนสถานะ' : action?.label}</DialogTitle></DialogHeader>
+          <div className="max-h-[70vh] space-y-3 overflow-y-auto py-2 pr-1">
+            {kind === 'confirm' && action && (
+              <p className="text-sm text-slate-700">
+                เปลี่ยนสถานะ <span className="font-mono">{t.ticket_no}</span> จาก "{STATUS_LABEL[t.status]}" เป็น{' '}
+                <span className="font-semibold">"{STATUS_LABEL[action.code]}"</span>
+              </p>
+            )}
+            {kind === 'close' && (
               <>
                 <div className="space-y-1">
                   <Label>ความพึงพอใจ</Label>
@@ -282,25 +448,47 @@ const RepairDetail: React.FC = () => {
                     ))}
                   </div>
                 </div>
-                <div className="space-y-1">
-                  <Label htmlFor="closeResult">ผลการซ่อม</Label>
-                  <select id="closeResult" className="h-10 w-full rounded-md border px-2 text-sm" value={closeResult} onChange={(e) => setCloseResult(e.target.value)}>
-                    {Object.entries(CLOSE_RESULT_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
-                </div>
               </>
             )}
-            <div className="space-y-1">
-              <Label htmlFor="remark">{needRemark ? 'รายละเอียด / เหตุผล (บังคับ)' : 'หมายเหตุ'}</Label>
-              <Textarea id="remark" rows={3} value={remark} onChange={(e) => setRemark(e.target.value)} />
-            </div>
+            {kind === 'done' && (
+              <div className="space-y-1">
+                <Label htmlFor="closeResult">ผลการซ่อม</Label>
+                <select id="closeResult" className="h-10 w-full rounded-md border px-2 text-sm" value={closeResult} onChange={(e) => setCloseResult(e.target.value)}>
+                  {Object.entries(CLOSE_RESULT_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+              </div>
+            )}
+            {kind === 'parts' && <PartsForm rows={partRows} onChange={setPartRows} />}
+            {kind === 'extRequest' && <ExternalFields step="request" form={extForm} onChange={setExtForm} />}
+            {kind === 'extSend' && <ExternalFields step="send" form={extForm} onChange={setExtForm} />}
+            {kind === 'extReceive' && <ExternalFields step="receive" form={extForm} onChange={setExtForm} />}
+            {kind !== 'confirm' && (
+              <div className="space-y-1">
+                <Label htmlFor="remark">
+                  {kind === 'cancel' ? 'เหตุผลที่ยกเลิก (บังคับ)'
+                    : kind === 'done' ? 'สิ่งที่ซ่อม / ผลการซ่อม (บังคับ)'
+                    : kind === 'sendBack' ? 'เหตุผลที่ส่งกลับซ่อม (บังคับ)'
+                    : kind === 'extRequest' ? 'อาการ / เหตุผลที่ต้องส่งซ่อมภายนอก (บังคับ)'
+                    : kind === 'close' ? 'ความเห็นเพิ่มเติม'
+                    : 'หมายเหตุ'}
+                </Label>
+                <Textarea id="remark" rows={kind === 'parts' ? 2 : 3} value={remark} onChange={(e) => setRemark(e.target.value)} />
+              </div>
+            )}
+            {showFiles && (
+              <div className="space-y-1">
+                <Label>{kind === 'done' ? 'รูปผลการซ่อม (ไม่บังคับ)' : 'รูปประกอบ (ไม่บังคับ)'}</Label>
+                <AttachmentPicker files={stepFiles} onChange={setStepFiles} imagesOnly />
+              </div>
+            )}
             {action?.code === 'ACCEPTED' && t.asset_id && (
-              <p className="text-xs text-slate-500">เมื่อรับงาน ทะเบียนครุภัณฑ์จะเปลี่ยนเป็น "อยู่ระหว่างซ่อม" จนกว่าจะปิดงาน</p>
+              <p className="text-xs text-slate-500">ทะเบียนครุภัณฑ์จะเปลี่ยนเป็น "อยู่ระหว่างซ่อม" จนกว่าจะปิดงาน</p>
             )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAction(null)} disabled={saving}>ยกเลิก</Button>
-            <Button onClick={submitAction} disabled={saving || (needRemark && !remark.trim())} className="bg-teal-700 hover:bg-teal-800">
+            <Button onClick={submitAction} disabled={!canSubmit}
+              className={kind === 'cancel' ? 'bg-red-600 hover:bg-red-700' : 'bg-teal-700 hover:bg-teal-800'}>
               {saving ? 'กำลังบันทึก...' : 'ยืนยัน'}
             </Button>
           </DialogFooter>

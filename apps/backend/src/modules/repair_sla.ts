@@ -32,11 +32,9 @@ interface Due {
   hours: number;
   sla_rule_id: number;
   warn_after_hours: number;
-  escalate_after_hours: number | null;
   notify_requester: boolean;
   notify_current_actor: boolean;
   notify_prev_actor: boolean;
-  escalate_permission: string | null;
 }
 
 async function currentActors(t: Due): Promise<number[]> {
@@ -64,8 +62,7 @@ export async function runSlaScan(): Promise<number> {
                 h.history_id, h.prev_actor,
                 (EXTRACT(EPOCH FROM (NOW() - t.status_entered_at)) / 3600)::FLOAT AS hours,
                 r.sla_rule_id, r.warn_after_hours::FLOAT AS warn_after_hours,
-                r.escalate_after_hours::FLOAT AS escalate_after_hours,
-                r.notify_requester, r.notify_current_actor, r.notify_prev_actor, r.escalate_permission
+                r.notify_requester, r.notify_current_actor, r.notify_prev_actor
            FROM repair_tickets t
            JOIN LATERAL (
              -- แถวที่ "เข้าสถานะปัจจุบัน" (ข้ามเหตุการณ์ย่อยที่ from = to เช่น มีผู้ติดตามเพิ่ม)
@@ -87,48 +84,39 @@ export async function runSlaScan(): Promise<number> {
         [OPEN_EXCLUDED]
       );
 
+      // แจ้งเตือนครั้งเดียวต่อการเข้าสถานะ (ไม่มีการส่งต่อหัวหน้า)
       for (const t of rows) {
-        const levels: (1 | 2)[] = [1];
-        if (t.escalate_after_hours && t.hours >= t.escalate_after_hours) levels.push(2);
+        const recipients = new Set<number>();
+        if (t.notify_requester) {
+          recipients.add(t.requester_id);
+          const w = await client.query('SELECT person_id FROM repair_ticket_watchers WHERE ticket_id = $1', [t.ticket_id]);
+          w.rows.forEach((r) => recipients.add(r.person_id));
+        }
+        if (t.notify_current_actor) (await currentActors(t)).forEach((id) => recipients.add(id));
+        if (t.notify_prev_actor && t.prev_actor) recipients.add(t.prev_actor);
+        const ids = [...recipients];
 
-        for (const level of levels) {
-          const recipients = new Set<number>();
-          if (t.notify_requester) {
-            recipients.add(t.requester_id);
-            const w = await client.query('SELECT person_id FROM repair_ticket_watchers WHERE ticket_id = $1', [t.ticket_id]);
-            w.rows.forEach((r) => recipients.add(r.person_id));
+        await client.query('BEGIN');
+        try {
+          const ins = await client.query(
+            `INSERT INTO repair_sla_alerts (ticket_id, history_id, sla_rule_id, status, level, hours_overdue, recipients)
+             VALUES ($1, $2, $3, $4, 1, $5, $6)
+             ON CONFLICT (history_id, level) DO NOTHING RETURNING alert_id`,
+            [t.ticket_id, t.history_id, t.sla_rule_id, t.status, (t.hours - t.warn_after_hours).toFixed(2), ids]
+          );
+          if (ins.rows.length > 0) {
+            await notify(client, ids, {
+              ticket_id: t.ticket_id,
+              type: 'SLA_WARNING',
+              title: `งานค้างเกินเวลา: ${t.ticket_no}`,
+              message: `"${STATUS_LABEL[t.status]}" ค้าง ${fmtHours(t.hours)} (กำหนด ${fmtHours(t.warn_after_hours)}) · ${t.title}`,
+            });
+            sent++;
           }
-          if (t.notify_current_actor) (await currentActors(t)).forEach((id) => recipients.add(id));
-          if (t.notify_prev_actor && t.prev_actor) recipients.add(t.prev_actor);
-          if (level === 2 && t.escalate_permission) {
-            (await personsWithPermission(client, t.escalate_permission)).forEach((id) => recipients.add(id));
-          }
-          const ids = [...recipients];
-
-          await client.query('BEGIN');
-          try {
-            const ins = await client.query(
-              `INSERT INTO repair_sla_alerts (ticket_id, history_id, sla_rule_id, status, level, hours_overdue, recipients)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)
-               ON CONFLICT (history_id, level) DO NOTHING RETURNING alert_id`,
-              [t.ticket_id, t.history_id, t.sla_rule_id, t.status, level,
-               (t.hours - (level === 2 ? t.escalate_after_hours! : t.warn_after_hours)).toFixed(2), ids]
-            );
-            if (ins.rows.length > 0) {
-              const limit = level === 2 ? t.escalate_after_hours! : t.warn_after_hours;
-              await notify(client, ids, {
-                ticket_id: t.ticket_id,
-                type: level === 2 ? 'SLA_ESCALATION' : 'SLA_WARNING',
-                title: `${level === 2 ? 'ส่งต่อหัวหน้า' : 'งานค้างเกินเวลา'}: ${t.ticket_no}`,
-                message: `"${STATUS_LABEL[t.status]}" ค้าง ${fmtHours(t.hours)} (กำหนด ${fmtHours(limit)}) · ${t.title}`,
-              });
-              sent++;
-            }
-            await client.query('COMMIT');
-          } catch (err) {
-            await client.query('ROLLBACK');
-            throw err;
-          }
+          await client.query('COMMIT');
+        } catch (err) {
+          await client.query('ROLLBACK');
+          throw err;
         }
       }
     } finally {

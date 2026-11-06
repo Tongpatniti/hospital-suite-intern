@@ -20,7 +20,7 @@ const MainLayout: React.FC = () => {
   const navItems = [
     { label: 'งานซ่อม', icon: <ClipboardList size={20} />, path: '/repairs', exact: true },
     { label: 'แจ้งซ่อม', icon: <Plus size={20} />, path: '/repairs/new', exact: true },
-    { label: 'ประวัติรายเครื่อง', icon: <History size={20} />, path: '/assets' },
+    { label: 'ประวัติการซ่อม', icon: <History size={20} />, path: '/assets' },
     ...(hasPermission('repair.audit.view') ? [{ label: 'ประวัติการแก้ไข', icon: <ShieldCheck size={20} />, path: '/audit' }] : []),
     { label: 'ตั้งค่าระบบ', icon: <Settings size={20} />, path: '/settings' },
   ];
