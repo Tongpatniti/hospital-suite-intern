@@ -11,6 +11,7 @@ const APP_TOKEN_SECONDS = 60;
 // permission ที่ต้องมีก่อนเข้าแอปผ่าน Hub (เพิ่มแอปใหม่ที่นี่)
 const APP_PERMISSION: Record<string, string | null> = {
   example: 'training.login',
+  repair: 'repair.login',
 };
 
 type LoginRow = {

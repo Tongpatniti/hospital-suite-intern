@@ -3,6 +3,9 @@ import cors from 'cors';
 import db from './db';
 import { authRoutes } from './auth';
 import { trainingItemsRoutes } from './modules/training_items';
+import { repairRoutes } from './modules/repair';
+import { runSlaScan, startSlaScheduler } from './modules/repair_sla';
+import { can, getCurrentUser } from './modules/repair_common';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3002', 10);
@@ -27,6 +30,19 @@ app.get('/api/health', async (_req, res) => {
 // ---------------------------------------------------------------------------
 authRoutes(app);
 trainingItemsRoutes(app);
+repairRoutes(app);
+
+// สั่งตรวจงานค้างทันที (สำหรับทดสอบ) — ต้องมีสิทธิ์ repair.settings
+app.post('/api/repair-sla/run', async (req, res) => {
+  const u = await getCurrentUser(req);
+  if (!u || !can(u, 'repair.settings')) return res.status(403).json({ success: false, message: 'ไม่มีสิทธิ์' });
+  try {
+    res.json({ success: true, sent: await runSlaScan() });
+  } catch (err) {
+    console.error('SLA run error', err);
+    res.status(500).json({ success: false, message: 'ตรวจงานค้างไม่สำเร็จ' });
+  }
+});
 
 // 404
 app.use('/api', (_req, res) => {
@@ -44,4 +60,5 @@ app.listen(PORT, () => {
   db.mtpPool.query('SELECT 1').catch((err) => {
     console.error('Cannot connect to database — ตรวจ .env แล้วรัน pnpm db:setup', err.message);
   });
+  startSlaScheduler();
 });

@@ -5,6 +5,7 @@ import {
   LogOut,
   Loader2,
   Key,
+  Wrench,
   type LucideIcon,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@repo/ui/card';
@@ -16,6 +17,7 @@ import api from '@repo/api-client';
 
 const iconMap: Record<string, LucideIcon> = {
   BookOpen,
+  Wrench,
 };
 
 interface AppEntry {
@@ -43,6 +45,16 @@ const apps: AppEntry[] = [
     description: 'โมดูลตัวอย่างสำหรับฝึกงาน — CRUD ครบวงจร ใช้เป็นแม่แบบ',
     color: 'bg-sky-500',
     permission: 'training.login',
+  },
+  {
+    name: 'ระบบแจ้งซ่อม',
+    url: import.meta.env.DEV
+      ? `http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:5181/repair/`
+      : '/repair/',
+    icon: 'Wrench',
+    description: 'แจ้งซ่อมคอมพิวเตอร์ เครื่องมือแพทย์ และงานทั่วไป พร้อมติดตามสถานะ',
+    color: 'bg-teal-600',
+    permission: 'repair.login',
   },
 ];
 
