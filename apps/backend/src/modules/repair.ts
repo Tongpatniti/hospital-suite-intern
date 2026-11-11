@@ -7,6 +7,7 @@ import {
   HttpError,
   OPEN_EXCLUDED,
   STATUS_LABEL,
+  SUPPLY_STATUSES,
   targetActors,
   TRANSITIONS,
   assetTypeOf,
@@ -22,7 +23,8 @@ import {
   withTx,
 } from './repair_common';
 import { linkStatusAttachments, listAttachments } from './repair_attachments';
-import { applyStepData, listExternals, listParts } from './repair_steps';
+import { applyStepData, listExternals, listParts, listPurchaseOrders } from './repair_steps';
+import { listCoTechnicians, listProgressLogs } from './repair_team';
 import { TICKET_COST_SQL } from './repair_history';
 
 // ===========================================================================
@@ -86,6 +88,8 @@ function canActAs(u: CurrentUser, actor: string, ticket: { asset_type: AssetType
       return u.permissions.includes('repair.supply');
     case 'approver':
       return u.permissions.includes('repair.approve');
+    case 'po_approver':
+      return u.permissions.includes('repair.po.approve');
     default:
       return false;
   }
@@ -157,10 +161,15 @@ export function repairRoutes(app: Express) {
       const where: string[] = [];
 
       const reqType = String(req.query.asset_type || '').toUpperCase();
-      const typeFilter = ASSET_TYPES.includes(reqType as AssetType) && types.includes(reqType as AssetType) ? [reqType] : types;
+      const isTypePage = ASSET_TYPES.includes(reqType as AssetType);
+      const typeFilter = isTypePage ? (types.includes(reqType as AssetType) ? [reqType] : []) : types;
       params.push(typeFilter);
-      where.push(`(t.asset_type = ANY($${params.length}) OR t.requester_id = $${params.length + 1})`);
-      params.push(u.person_id);
+      if (isTypePage) {
+        where.push(`t.asset_type = ANY($${params.length})`);
+      } else {
+        params.push(u.person_id);
+        where.push(`(t.asset_type = ANY($${params.length - 1}) OR t.requester_id = $${params.length})`);
+      }
 
       const status = String(req.query.status || '');
       if (status === 'open') {
@@ -174,6 +183,19 @@ export function repairRoutes(app: Express) {
         params.push(u.person_id);
         where.push(`(t.requester_id = $${params.length} OR t.assignee_id = $${params.length}
                      OR EXISTS (SELECT 1 FROM repair_ticket_watchers w WHERE w.ticket_id = t.ticket_id AND w.person_id = $${params.length}))`);
+      }
+      const scope = String(req.query.scope || '');
+      if (scope === 'my_requests') {
+        params.push(u.person_id);
+        where.push(`t.requester_id = $${params.length}`);
+      } else if (scope === 'my_tasks') {
+        params.push(u.person_id);
+        where.push(`(t.assignee_id = $${params.length} OR EXISTS (
+                     SELECT 1 FROM repair_co_technicians c WHERE c.ticket_id = t.ticket_id AND c.person_id = $${params.length}))`);
+      } else if (scope === 'handled') {
+        params.push(u.person_id, SUPPLY_STATUSES);
+        where.push(`EXISTS (SELECT 1 FROM repair_status_history h WHERE h.ticket_id = t.ticket_id
+                     AND h.changed_by = $${params.length - 1} AND h.to_status = ANY($${params.length}))`);
       }
       const q = String(req.query.q || '').trim();
       if (q) {
@@ -200,7 +222,8 @@ export function repairRoutes(app: Express) {
               LIMIT 1
            ) sla ON TRUE
           WHERE ${where.join(' AND ')}
-          ORDER BY (t.status = ANY('{CLOSED,CANCELLED}')) ASC,
+          ORDER BY ${req.query.view === 'all' ? '' : `(CASE WHEN t.requester_id = ${u.person_id} THEN 0 ELSE 1 END) ASC,`}
+                   (t.status = ANY('{CLOSED,CANCELLED}')) ASC,
                    (EXTRACT(EPOCH FROM (NOW() - t.status_entered_at)) / 3600) / NULLIF(sla.warn_after_hours, 0) DESC NULLS LAST,
                    t.created_date DESC
           LIMIT 300`,
@@ -219,19 +242,23 @@ export function repairRoutes(app: Express) {
       const { rows } = await mtpPool.query(
         `SELECT t.*, rq.firstname || ' ' || COALESCE(rq.lastname, '') AS requester_name,
                 asg.firstname || ' ' || COALESCE(asg.lastname, '') AS assignee_name,
-                a.status AS asset_current_status, d.ticket_no AS duplicate_of_ticket_no
+                a.status AS asset_current_status, d.ticket_no AS duplicate_of_ticket_no,
+                dn.firstname || ' ' || COALESCE(dn.lastname, '') AS done_by_name,
+                cb.firstname || ' ' || COALESCE(cb.lastname, '') AS closed_by_name
            FROM repair_tickets t
            JOIN person rq ON rq.person_id = t.requester_id
            LEFT JOIN person asg ON asg.person_id = t.assignee_id
            LEFT JOIN assets a ON a.asset_id = t.asset_id
            LEFT JOIN repair_tickets d ON d.ticket_id = t.duplicate_of_ticket_id
+            LEFT JOIN person dn ON dn.person_id = t.done_by
+            LEFT JOIN person cb ON cb.person_id = t.closed_by
           WHERE t.ticket_id = $1`,
         [req.params.id]
       );
       const ticket = rows[0];
       if (!ticket) throw new HttpError(404, 'ไม่พบใบซ่อม');
 
-      const [history, watchers, alerts, evaluation, prev, attachments, parts, externals] = await Promise.all([
+      const [history, watchers, alerts, evaluation, prev, attachments, parts, externals, purchaseOrders, coTechs, progress] = await Promise.all([
         mtpPool.query(
           `SELECT h.*, p.firstname || ' ' || COALESCE(p.lastname, '') AS changed_by_name
              FROM repair_status_history h LEFT JOIN person p ON p.person_id = h.changed_by
@@ -257,6 +284,9 @@ export function repairRoutes(app: Express) {
         listAttachments(ticket.ticket_id),
         listParts(ticket.ticket_id),
         listExternals(ticket.ticket_id),
+        listPurchaseOrders(ticket.ticket_id),
+        listCoTechnicians(ticket.ticket_id),
+        listProgressLogs(ticket.ticket_id),
       ]);
 
       const allowed = (TRANSITIONS[ticket.status] || []).filter((s) =>
@@ -275,6 +305,9 @@ export function repairRoutes(app: Express) {
           attachments,
           parts,
           externals,
+          purchase_orders: purchaseOrders,
+          co_technicians: coTechs,
+          progress_logs: progress,
           allowed_transitions: allowed.map((s) => ({ code: s, label: STATUS_LABEL[s] })),
           is_watching: watchers.rows.some((w) => w.person_id === u.person_id),
         },
@@ -384,6 +417,7 @@ export function repairRoutes(app: Express) {
         if (toStatus === 'CANCELLED' && !remark) throw new HttpError(400, 'กรุณาระบุเหตุผลการยกเลิก');
         if (toStatus === 'DONE' && !remark) throw new HttpError(400, 'กรุณาระบุรายละเอียดการซ่อม');
         if (toStatus === 'WAIT_EXTERNAL' && !remark) throw new HttpError(400, 'กรุณาระบุอาการ / เหตุผลที่ต้องส่งซ่อมภายนอก');
+        if (t.status === 'PO_PENDING' && toStatus === 'PART_APPROVAL' && !remark) throw new HttpError(400, 'กรุณาระบุเหตุผลที่ไม่อนุมัติ PO');
         if (toStatus === 'IN_PROGRESS' && (t.status === 'DONE' || t.status === 'CLOSED') && !remark) {
           throw new HttpError(400, 'กรุณาระบุเหตุผลที่ส่งกลับซ่อม');
         }
@@ -408,14 +442,14 @@ export function repairRoutes(app: Express) {
         if (toStatus === 'DONE') {
           const cr = closeResult || 'REPAIRED';
           if (!['REPAIRED', 'UNREPAIRABLE', 'NOT_FOUND'].includes(cr)) throw new HttpError(400, 'ผลการซ่อมไม่ถูกต้อง');
-          sets.push('done_date = NOW()', `close_result = $${vals.push(cr)}`);
+          sets.push('done_date = NOW()', `close_result = $${vals.push(cr)}`, `done_by = $${vals.push(u.person_id)}`);
           metadata.close_result = cr;
         }
         if (toStatus === 'CANCELLED') sets.push('cancelled_date = NOW()');
         if (toStatus === 'CLOSED') {
           const score = parseInt(String(req.body.score || ''), 10);
           if (!(score >= 1 && score <= 5)) throw new HttpError(400, 'กรุณาให้คะแนนความพึงพอใจ 1–5 ดาว');
-          sets.push('closed_date = NOW()', `close_result = COALESCE(close_result, 'REPAIRED')`);
+          sets.push('closed_date = NOW()', `close_result = COALESCE(close_result, 'REPAIRED')`, `closed_by = $${vals.push(u.person_id)}`);
           await client.query(
             `INSERT INTO repair_evaluations (ticket_id, score, comment, evaluated_by) VALUES ($1, $2, $3, $4)
              ON CONFLICT (ticket_id) DO UPDATE SET score = EXCLUDED.score, comment = EXCLUDED.comment,
@@ -425,12 +459,12 @@ export function repairRoutes(app: Express) {
           metadata.score = score;
         }
         if (toStatus === 'IN_PROGRESS' && t.status === 'CLOSED') {
-          sets.push('reopen_count = reopen_count + 1', 'closed_date = NULL', 'close_result = NULL');
+          sets.push('reopen_count = reopen_count + 1', 'closed_date = NULL', 'closed_by = NULL', 'close_result = NULL');
           metadata.event = 'REOPEN';
         }
         if (toStatus === 'IN_PROGRESS' && t.status === 'PART_ARRIVED') metadata.event = 'PART_ISSUED';
         if (toStatus === 'IN_PROGRESS' && t.status === 'EXT_RECEIVED') metadata.event = 'EXT_INSPECTED';
-        if (toStatus === 'IN_PROGRESS' && t.status === 'DONE') sets.push('done_date = NULL', 'close_result = NULL');
+        if (toStatus === 'IN_PROGRESS' && t.status === 'DONE') sets.push('done_date = NULL', 'done_by = NULL', 'close_result = NULL');
 
         // ข้อมูลประจำขั้น (ฟอร์มอะไหล่ / ส่งซ่อมภายนอก)
         Object.assign(metadata, await applyStepData(client, t, toStatus, req.body, u.person_id));
@@ -464,6 +498,9 @@ export function repairRoutes(app: Express) {
 
         const recipients = await ticketRecipients(client, t.ticket_id, u.person_id);
         // ส่งเรื่องให้พัสดุ
+        if (toStatus === 'PO_PENDING') {
+          recipients.push(...(await personsWithPermission(client, 'repair.po.approve')).filter((id) => id !== u.person_id));
+        }
         if (toStatus === 'WAIT_PART' || toStatus === 'WAIT_EXTERNAL') {
           recipients.push(...(await personsWithPermission(client, 'repair.supply')).filter((id) => id !== u.person_id));
         }
@@ -585,7 +622,6 @@ export function repairRoutes(app: Express) {
 
       // MTBF: ช่วงห่างเฉลี่ย (วัน) ระหว่างวันที่แจ้งของใบที่ต่อกัน
       const dates = tickets.rows
-        .filter((t) => t.status !== 'CANCELLED')
         .map((t) => new Date(t.created_date).getTime())
         .sort((a, b) => a - b);
       const gaps = dates.slice(1).map((d, i) => (d - dates[i]) / 86_400_000);
@@ -599,7 +635,7 @@ export function repairRoutes(app: Express) {
           summary: {
             ...s,
             mtbf_days: mtbf,
-            total_cost: tickets.rows.filter((r) => r.status !== 'CANCELLED').reduce((a, r) => a + (Number(r.total_cost) || 0), 0),
+            total_cost: tickets.rows.reduce((a, r) => a + (Number(r.total_cost) || 0), 0),
           },
           replace_suggestion: s.repair_count_12m >= Number(count12)
             ? { reason: `ซ่อม ${s.repair_count_12m} ครั้งใน 12 เดือน (เกณฑ์ ${count12} ครั้ง)`, cost_pct_threshold: Number(costPct) }

@@ -224,7 +224,7 @@ export function ExternalFields({ step, form, onChange }: { step: 'request' | 'se
         <Input id="rd" type="date" required max={todayLocal()} value={form.return_date} onChange={(e) => set('return_date', e.target.value)} />
       </div>
       <div className="space-y-1">
-        <Label htmlFor="ac">ค่าซ่อม (บาท)</Label>
+        <Label htmlFor="ac">ค่าซ่อม (บาท) *</Label>
         <Input id="ac" type="number" min="0" step="0.01" value={form.actual_cost} onChange={(e) => set('actual_cost', e.target.value)} />
       </div>
       <div className="space-y-1 sm:col-span-2">

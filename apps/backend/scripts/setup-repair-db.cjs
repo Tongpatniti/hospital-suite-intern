@@ -25,6 +25,7 @@ const PERMISSIONS = [
   ['repair.general.tech', 'repair', 'ช่างทั่วไป'],
   ['repair.supply', 'repair', 'พัสดุ'],
   ['repair.approve', 'repair', 'ผู้อนุมัติ'],
+  ['repair.po.approve', 'repair', 'ผู้อนุมัติ PO'],
   ['repair.audit.view', 'repair', 'ดูประวัติการแก้ไข'],
   ['repair.all', 'repair', 'เห็นงานซ่อมทุกประเภท'],
   ['repair.settings', 'repair', 'ตั้งค่าระบบแจ้งซ่อม'],
@@ -33,14 +34,18 @@ const PERMISSIONS = [
 const ROLES = {
   admin: PERMISSIONS.map((p) => p[0]),
   staff: ['repair.login', 'repair.computer.request', 'repair.medical.request', 'repair.general.request'],
-  technician: ['repair.login', 'repair.computer.tech', 'repair.general.tech', 'repair.computer.request'],
+  technician: ['repair.login', 'repair.computer.tech', 'repair.general.tech', 'repair.medical.tech', 'repair.computer.request'],
   supply: ['repair.login', 'repair.supply'],
+  tech2: ['repair.login', 'repair.computer.tech', 'repair.general.tech', 'repair.medical.tech'],
+  po_approver: ['repair.login', 'repair.po.approve'],
 };
 
 // ผู้ใช้ทดสอบเพิ่มเติม [username, password, firstname, lastname, role]
 const USERS = [
   ['tech', 'tech123', 'กิตติ', 'ช่างไอที', 'technician'],
+  ['tech2', 'tech123', 'สมชาย', 'ช่างซ่อมบำรุง 2', 'tech2'],
   ['supply', 'supply123', 'อรุณี', 'พัสดุ', 'supply'],
+  ['poapprover', 'po123', 'วันดี', 'ผู้อนุมัติ PO', 'po_approver'],
 ];
 
 // [code, name, serial, equipment_type_id, custodian, location, price, purchase_date]
@@ -136,8 +141,10 @@ async function main() {
   console.log('\nเสร็จสิ้น! บัญชีทดสอบ:');
   console.log('  admin / admin123  (ทุกสิทธิ์รวมตั้งค่าและดูประวัติการแก้ไข)');
   console.log('  staff / staff123  (แจ้งซ่อมได้)');
-  console.log('  tech  / tech123   (ช่างคอมพิวเตอร์ + ทั่วไป)');
+  console.log('  tech  / tech123   (ช่างทุกประเภท)');
+  console.log('  tech2 / tech123   (ช่างคอมพิวเตอร์ + ทั่วไป + เครื่องมือแพทย์ สำหรับทดสอบโอนงาน)');
   console.log('  supply / supply123 (พัสดุ: รับเรื่องอะไหล่และส่งซ่อมภายนอก)');
+  console.log('  poapprover / po123 (ผู้อนุมัติ PO)');
 }
 
 main().catch((err) => {

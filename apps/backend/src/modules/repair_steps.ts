@@ -88,7 +88,7 @@ export async function applyStepData(
   client: PoolClient,
   t: { ticket_id: number; status: string },
   toStatus: string,
-  body: { parts?: unknown; external?: Record<string, unknown>; remark?: string },
+  body: { parts?: unknown; external?: Record<string, unknown>; po?: Record<string, unknown>; remark?: string },
   personId: number
 ): Promise<Record<string, unknown>> {
   const ext = body.external || {};
@@ -98,6 +98,38 @@ export async function applyStepData(
     if (parts.length === 0) throw new HttpError(400, 'กรุณากรอกรายการอะไหล่ที่ต้องการอย่างน้อย 1 รายการ');
     await insertParts(client, t.ticket_id, personId, parts);
     return { parts_count: parts.length };
+  }
+
+  if (toStatus === 'PO_PENDING') {
+    const po = body.po || {};
+    const poNo = String(po.po_no || '').trim();
+    if (!poNo) throw new HttpError(400, 'กรุณาระบุเลขที่ใบสั่งซื้อ (PO)');
+    const poDate = String(po.po_date || '').trim() ? await checkDate(client, po.po_date, 'วันที่ PO') : null;
+    await client.query(
+      `INSERT INTO repair_purchase_orders (ticket_id, po_no, po_date, requested_by) VALUES ($1, $2, $3::date, $4)`,
+      [t.ticket_id, poNo.slice(0, 100), poDate, personId]
+    );
+    return { po_no: poNo };
+  }
+
+  if (toStatus === 'PO_APPROVED') {
+    const { rows } = await client.query(
+      `UPDATE repair_purchase_orders SET status = 'APPROVED', decided_by = $1, decided_at = NOW()
+        WHERE po_id = (SELECT po_id FROM repair_purchase_orders WHERE ticket_id = $2 AND status = 'PENDING' ORDER BY po_id DESC LIMIT 1)
+        RETURNING po_no`,
+      [personId, t.ticket_id]
+    );
+    if (rows.length === 0) throw new HttpError(400, 'ไม่พบใบสั่งซื้อที่รออนุมัติ');
+    return { po_no: rows[0].po_no };
+  }
+
+  if (t.status === 'PO_PENDING' && toStatus === 'PART_APPROVAL') {
+    await client.query(
+      `UPDATE repair_purchase_orders SET status = 'REJECTED', decided_by = $1, decided_at = NOW(), decision_remark = $2
+        WHERE po_id = (SELECT po_id FROM repair_purchase_orders WHERE ticket_id = $3 AND status = 'PENDING' ORDER BY po_id DESC LIMIT 1)`,
+      [personId, String(body.remark || '').trim() || null, t.ticket_id]
+    );
+    return { event: 'PO_REJECTED' };
   }
 
   if (toStatus === 'PART_PURCHASING') {
@@ -135,8 +167,9 @@ export async function applyStepData(
 
   if (toStatus === 'EXT_RECEIVED') {
     const cost = num(ext.actual_cost);
+    if (cost === null) throw new HttpError(400, 'กรุณาระบุค่าซ่อม');
     if (Number.isNaN(cost)) throw new HttpError(400, 'ค่าซ่อมไม่ถูกต้อง');
-    const ret = await checkDate(client, ext.return_date, 'วันที่รับเครื่องคืน');
+    const ret = await checkDate(client, ext.return_date, 'วันที่รับอุปกรณ์คืน');
     const e = await latestExternal(client, t.ticket_id);
     if (e.sent_date && ret < String(e.sent_date instanceof Date ? e.sent_date.toISOString().slice(0, 10) : e.sent_date).slice(0, 10)) {
       throw new HttpError(400, 'วันที่รับเครื่องคืนต้องไม่ก่อนวันที่ส่ง');
@@ -170,6 +203,24 @@ export async function listParts(ticketId: number) {
   }
 }
 
+export async function listPurchaseOrders(ticketId: number) {
+  try {
+    const { rows } = await mtpPool.query(
+      `SELECT po.*, rq.firstname || ' ' || COALESCE(rq.lastname, '') AS requested_by_name,
+              dc.firstname || ' ' || COALESCE(dc.lastname, '') AS decided_by_name
+         FROM repair_purchase_orders po
+         LEFT JOIN person rq ON rq.person_id = po.requested_by
+         LEFT JOIN person dc ON dc.person_id = po.decided_by
+        WHERE po.ticket_id = $1 ORDER BY po.po_id`,
+      [ticketId]
+    );
+    return rows;
+  } catch (err) {
+    if ((err as { code?: string }).code === '42P01') return [];
+    throw err;
+  }
+}
+
 export async function listExternals(ticketId: number) {
   try {
     const { rows } = await mtpPool.query(
@@ -186,7 +237,7 @@ export async function listExternals(ticketId: number) {
   }
 }
 
-const PART_EDITABLE_STATUS = ['WAIT_PART', 'PART_APPROVAL', 'PART_PURCHASING', 'PART_ARRIVED'];
+const PART_EDITABLE_STATUS = ['WAIT_PART', 'PART_APPROVAL', 'PO_PENDING', 'PO_APPROVED', 'PART_PURCHASING', 'PART_ARRIVED'];
 
 export function repairStepRoutes(app: Express) {
   // ช่างเพิ่มรายการอะไหล่ระหว่างรอพัสดุ

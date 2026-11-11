@@ -497,5 +497,83 @@ SELECT t.asset_id,
   FROM repair_tickets t
   LEFT JOIN repair_evaluations ev USING (ticket_id)
  WHERE t.asset_id IS NOT NULL
-   AND t.status <> 'CANCELLED'
  GROUP BY t.asset_id;
+
+-- ---------------------------------------------------------------------------
+-- ประเภทงานซ่อมย่อยถูกยกเลิก (เลือกได้เฉพาะ 3 ประเภทหลัก) — ลบออกจากฐานข้อมูลถ้ามีอยู่
+-- ---------------------------------------------------------------------------
+DROP INDEX IF EXISTS ix_repair_tickets_job_category;
+ALTER TABLE repair_tickets DROP COLUMN IF EXISTS job_category_id;
+DROP TABLE IF EXISTS repair_job_categories;
+
+ALTER TABLE repair_tickets ADD COLUMN IF NOT EXISTS done_by         INTEGER REFERENCES person(person_id);
+ALTER TABLE repair_tickets ADD COLUMN IF NOT EXISTS closed_by       INTEGER REFERENCES person(person_id);
+
+-- ---------------------------------------------------------------------------
+-- 6.20 repair_co_technicians — ผู้ร่วมซ่อม
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS repair_co_technicians (
+  ticket_id INTEGER NOT NULL REFERENCES repair_tickets(ticket_id) ON DELETE CASCADE,
+  person_id INTEGER NOT NULL REFERENCES person(person_id) ON DELETE CASCADE,
+  added_by  INTEGER REFERENCES person(person_id),
+  added_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (ticket_id, person_id)
+);
+
+-- ---------------------------------------------------------------------------
+-- 6.21 repair_progress_logs — บันทึกความคืบหน้าระหว่างซ่อม (append-only, แสดงเป็น timeline)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS repair_progress_logs (
+  log_id     BIGSERIAL PRIMARY KEY,
+  ticket_id  INTEGER NOT NULL REFERENCES repair_tickets(ticket_id) ON DELETE CASCADE,
+  person_id  INTEGER NOT NULL REFERENCES person(person_id),
+  note       TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS ix_repair_progress_ticket ON repair_progress_logs (ticket_id, created_at);
+
+DROP TRIGGER IF EXISTS trg_repair_progress_immutable ON repair_progress_logs;
+CREATE TRIGGER trg_repair_progress_immutable BEFORE UPDATE OR DELETE ON repair_progress_logs
+  FOR EACH ROW EXECUTE FUNCTION repair_append_only();
+
+-- ---------------------------------------------------------------------------
+-- 6.22 repair_purchase_orders — ใบสั่งซื้อ (PO) ของใบซ่อม และการอนุมัติ
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS repair_purchase_orders (
+  po_id           SERIAL PRIMARY KEY,
+  ticket_id       INTEGER NOT NULL REFERENCES repair_tickets(ticket_id) ON DELETE CASCADE,
+  po_no           VARCHAR(100) NOT NULL,
+  po_date         DATE,
+  status          VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED')),
+  requested_by    INTEGER REFERENCES person(person_id),
+  requested_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  decided_by      INTEGER REFERENCES person(person_id),
+  decided_at      TIMESTAMPTZ,
+  decision_remark TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_repair_po_ticket ON repair_purchase_orders (ticket_id, requested_at);
+
+DROP TRIGGER IF EXISTS trg_audit_repair_purchase_orders ON repair_purchase_orders;
+CREATE TRIGGER trg_audit_repair_purchase_orders AFTER UPDATE ON repair_purchase_orders
+  FOR EACH ROW EXECUTE FUNCTION repair_audit_trigger('po_id', 'none', 'po_no', 'status', 'decided_by', 'decision_remark');
+
+-- SLA ของขั้นอนุมัติ PO
+INSERT INTO repair_sla_rules (status, urgency, warn_after_hours, notify_requester, notify_current_actor, notify_prev_actor) VALUES
+  ('PO_PENDING',  NULL, 72, FALSE, TRUE, TRUE),
+  ('PO_APPROVED', NULL, 24, FALSE, TRUE, TRUE)
+ON CONFLICT DO NOTHING;
+
+-- CHECK ของสถานะใบซ่อม: ฐานข้อมูลเดิมอาจมี constraint รุ่นก่อนที่ไม่รู้จักสถานะ PO จึงต้องสร้างใหม่ให้ครบ
+ALTER TABLE repair_tickets DROP CONSTRAINT IF EXISTS repair_tickets_status_check;
+ALTER TABLE repair_tickets ADD CONSTRAINT repair_tickets_status_check CHECK (status IN (
+  'NEW', 'ACCEPTED', 'IN_PROGRESS', 'WAIT_PART', 'PART_APPROVAL', 'PO_PENDING', 'PO_APPROVED', 'PART_PURCHASING',
+  'PART_ARRIVED', 'WAIT_EXTERNAL', 'EXT_APPROVAL', 'EXT_SENT', 'EXT_RECEIVED', 'DONE', 'CLOSED', 'CANCELLED'));
+ALTER TABLE repair_status_history DROP CONSTRAINT IF EXISTS repair_status_history_from_status_check;
+ALTER TABLE repair_status_history ADD CONSTRAINT repair_status_history_from_status_check CHECK (from_status IS NULL OR from_status IN (
+  'NEW', 'ACCEPTED', 'IN_PROGRESS', 'WAIT_PART', 'PART_APPROVAL', 'PO_PENDING', 'PO_APPROVED', 'PART_PURCHASING',
+  'PART_ARRIVED', 'WAIT_EXTERNAL', 'EXT_APPROVAL', 'EXT_SENT', 'EXT_RECEIVED', 'DONE', 'CLOSED', 'CANCELLED'));
+ALTER TABLE repair_status_history DROP CONSTRAINT IF EXISTS repair_status_history_to_status_check;
+ALTER TABLE repair_status_history ADD CONSTRAINT repair_status_history_to_status_check CHECK (to_status IN (
+  'NEW', 'ACCEPTED', 'IN_PROGRESS', 'WAIT_PART', 'PART_APPROVAL', 'PO_PENDING', 'PO_APPROVED', 'PART_PURCHASING',
+  'PART_ARRIVED', 'WAIT_EXTERNAL', 'EXT_APPROVAL', 'EXT_SENT', 'EXT_RECEIVED', 'DONE', 'CLOSED', 'CANCELLED'));
+

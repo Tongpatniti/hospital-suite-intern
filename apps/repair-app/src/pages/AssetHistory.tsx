@@ -29,6 +29,18 @@ interface HistoryData {
   tickets: TicketRow[];
 }
 
+interface StatRow {
+  asset_id: number; asset_code: string; name: string; department_name: string | null; asset_type: AssetType;
+  repair_count: number; repair_count_12m: number; cancelled_count: number; last_repair_date: string | null; total_cost: number;
+}
+
+const TYPE_FILTERS: { key: string; label: string }[] = [
+  { key: '', label: 'ทุกประเภท' },
+  { key: 'COMPUTER', label: 'คอมพิวเตอร์' },
+  { key: 'MEDICAL', label: 'เครื่องมือแพทย์' },
+  { key: 'GENERAL', label: 'ทั่วไป' },
+];
+
 const FILTERS = [
   { key: 'all', label: 'ทั้งหมด' },
   { key: 'yes', label: 'มีรหัสครุภัณฑ์' },
@@ -93,6 +105,8 @@ const AssetHistory: React.FC = () => {
 
   // ภาพรวมทุกใบ
   const [filter, setFilter] = useState('all');
+  const [assetType, setAssetType] = useState('');
+  const [stats, setStats] = useState<StatRow[]>([]);
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [list, setList] = useState<{ rows: TicketRow[]; total: number; totalPages: number }>({ rows: [], total: 0, totalPages: 1 });
@@ -110,12 +124,22 @@ const AssetHistory: React.FC = () => {
   useEffect(() => {
     if (id) return;
     const t = setTimeout(() => {
-      api.get('/api/repair-history', { params: { has_asset: filter, q, page, page_size: 30 } })
+      api.get('/api/repair-history', { params: { has_asset: filter, asset_type: assetType, q, page, page_size: 30 } })
         .then((r) => setList({ rows: r.data.data, total: r.data.total, totalPages: r.data.total_pages }))
         .catch((err) => toast({ title: errorMessage(err, 'โหลดประวัติไม่สำเร็จ'), variant: 'destructive' }));
     }, 250);
     return () => clearTimeout(t);
-  }, [id, filter, q, page]);
+  }, [id, filter, assetType, q, page]);
+
+  useEffect(() => {
+    if (id) return;
+    const t = setTimeout(() => {
+      api.get('/api/repair-asset-stats', { params: { asset_type: assetType } })
+        .then((r) => setStats(r.data.data))
+        .catch((err) => toast({ title: errorMessage(err, 'โหลดสถิติครุภัณฑ์ไม่สำเร็จ'), variant: 'destructive' }));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [id, assetType]);
 
   useEffect(() => {
     if (!id) return;
@@ -166,6 +190,14 @@ const AssetHistory: React.FC = () => {
                 </button>
               ))}
               <div className="flex-1" />
+              <div className="flex flex-wrap gap-1">
+                {TYPE_FILTERS.map((f) => (
+                  <button key={f.key} onClick={() => { setAssetType(f.key); setPage(1); }}
+                    className={cn('rounded-md px-3 py-1.5 text-sm', assetType === f.key ? 'bg-teal-50 font-semibold text-teal-800' : 'text-slate-600 hover:bg-slate-50')}>
+                    {f.label}
+                  </button>
+                ))}
+              </div>
               <div className="relative w-full max-w-sm">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <Input className="pl-9" placeholder="เลขใบ / ชื่อสิ่งของ / อาการ / แผนก" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
@@ -179,6 +211,53 @@ const AssetHistory: React.FC = () => {
                 <span>หน้า {page} / {list.totalPages}</span>
                 <Button variant="outline" size="sm" disabled={page >= list.totalPages} onClick={() => setPage((p) => p + 1)}>ถัดไป</Button>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {!id && (
+        <Card>
+          <CardContent className="space-y-3 p-4">
+            <div>
+              <h2 className="font-semibold text-slate-800">สถิติการซ่อมรายครุภัณฑ์</h2>
+              <p className="text-xs text-slate-500">นับทุกใบซ่อมของเครื่อง รวมใบที่ยกเลิก เรียงจากซ่อมมากที่สุด</p>
+            </div>
+            <div className="overflow-x-auto rounded-md border">
+              <Table className="min-w-[860px]">
+                <TableHeader className="bg-slate-100">
+                  <TableRow>
+                    <TableHead className="w-36">รหัสครุภัณฑ์</TableHead>
+                    <TableHead>ชื่อครุภัณฑ์</TableHead>
+                    <TableHead className="w-32">ประเภท</TableHead>
+                    <TableHead className="w-24 text-right">ซ่อมทั้งหมด</TableHead>
+                    <TableHead className="w-24 text-right">ใน 12 เดือน</TableHead>
+                    <TableHead className="w-24 text-right">ยกเลิก</TableHead>
+                    <TableHead className="w-32 text-right">ค่าซ่อมสะสม</TableHead>
+                    <TableHead className="w-36">ซ่อมล่าสุด</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {stats.length === 0 && (
+                    <TableRow><TableCell colSpan={8} className="py-6 text-center text-slate-400">ไม่มีข้อมูลครุภัณฑ์</TableCell></TableRow>
+                  )}
+                  {stats.map((s) => (
+                    <TableRow key={s.asset_id} className="cursor-pointer hover:bg-slate-50" onClick={() => navigate(`/assets/${s.asset_id}`)}>
+                      <TableCell className="font-mono text-xs">{s.asset_code}</TableCell>
+                      <TableCell>
+                        <div className="font-medium">{s.name}</div>
+                        {s.department_name && <div className="text-xs text-slate-500">{s.department_name}</div>}
+                      </TableCell>
+                      <TableCell className="text-sm">{ASSET_TYPE_LABEL[s.asset_type]}</TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">{s.repair_count}</TableCell>
+                      <TableCell className="text-right tabular-nums">{s.repair_count_12m}</TableCell>
+                      <TableCell className="text-right tabular-nums">{s.cancelled_count}</TableCell>
+                      <TableCell className="text-right tabular-nums text-sm">{s.total_cost ? fmtMoney(s.total_cost) : '–'}</TableCell>
+                      <TableCell className="text-xs">{s.last_repair_date ? fmtDateTimeTH(s.last_repair_date) : '–'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
           </CardContent>
         </Card>
@@ -210,7 +289,7 @@ const AssetHistory: React.FC = () => {
 
           <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
             {[
-              ['ซ่อมทั้งหมด', current.summary.repair_count],
+              ['ซ่อมทั้งหมด (รวมยกเลิก)', current.summary.repair_count],
               ['ใน 12 เดือน', current.summary.repair_count_12m],
               ['ค่าซ่อมสะสม (บาท)', fmtMoney(current.summary.total_cost)],
               ['วันที่ใช้งานไม่ได้', current.summary.downtime_days ?? 0],

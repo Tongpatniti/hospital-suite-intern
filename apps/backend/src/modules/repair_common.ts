@@ -12,13 +12,15 @@ export const STATUS_LABEL: Record<string, string> = {
   ACCEPTED: 'รับงานซ่อม',
   IN_PROGRESS: 'กำลังดำเนินงาน',
   WAIT_PART: 'สั่งซื้ออะไหล่',
-  PART_APPROVAL: 'พัสดุรับเรื่อง+รออนุมัติ',
-  PART_PURCHASING: 'ผ่านอนุมัติ+กำลังจัดซื้อ',
+  PART_APPROVAL: 'พัสดุรับเรื่องอะไหล่',
+  PO_PENDING: 'รออนุมัติ PO',
+  PO_APPROVED: 'ได้รับการอนุมัติ PO แล้ว',
+  PART_PURCHASING: 'กำลังจัดซื้ออะไหล่',
   PART_ARRIVED: 'อะไหล่ถึงคลัง',
   WAIT_EXTERNAL: 'แจ้งส่งซ่อมภายนอก',
   EXT_APPROVAL: 'พัสดุรับเรื่อง+รออนุมัติส่งซ่อม',
   EXT_SENT: 'ส่งร้านภายนอกแล้ว',
-  EXT_RECEIVED: 'รับเครื่องคืนแล้ว',
+  EXT_RECEIVED: 'รับอุปกรณ์คืนแล้ว',
   DONE: 'ซ่อมแล้วเสร็จ (รอตรวจรับ)',
   CLOSED: 'ตรวจรับ+ปิดงาน',
   CANCELLED: 'ยกเลิก',
@@ -26,13 +28,24 @@ export const STATUS_LABEL: Record<string, string> = {
 
 export const OPEN_EXCLUDED = ['CLOSED', 'CANCELLED'];
 
+// สถานะที่อยู่ในความดูแลของพัสดุ
+export const SUPPLY_STATUSES = [
+  'WAIT_PART', 'PART_APPROVAL', 'PO_PENDING', 'PO_APPROVED', 'PART_PURCHASING', 'PART_ARRIVED',
+  'WAIT_EXTERNAL', 'EXT_APPROVAL', 'EXT_SENT',
+];
+
+// สถานะที่ช่างผู้รับผิดชอบยังถือใบงานอยู่ (ใช้กับการโอนงานและการเพิ่มผู้ร่วมซ่อม)
+export const TECH_HELD_STATUSES = ['ACCEPTED', 'IN_PROGRESS', 'WAIT_PART', 'WAIT_EXTERNAL', 'PART_ARRIVED', 'EXT_RECEIVED'];
+
 // state diagram หัวข้อ 4 ของ spec
 export const TRANSITIONS: Record<string, string[]> = {
   NEW: ['ACCEPTED', 'CANCELLED'],
   ACCEPTED: ['IN_PROGRESS', 'CANCELLED'],
   IN_PROGRESS: ['DONE', 'WAIT_PART', 'WAIT_EXTERNAL', 'CANCELLED'],
   WAIT_PART: ['PART_APPROVAL', 'CANCELLED'],
-  PART_APPROVAL: ['PART_PURCHASING', 'CANCELLED'],
+  PART_APPROVAL: ['PO_PENDING', 'CANCELLED'],
+  PO_PENDING: ['PO_APPROVED', 'PART_APPROVAL'],
+  PO_APPROVED: ['PART_PURCHASING'],
   PART_PURCHASING: ['PART_ARRIVED'],
   PART_ARRIVED: ['IN_PROGRESS'],
   WAIT_EXTERNAL: ['EXT_APPROVAL', 'CANCELLED'],
@@ -45,13 +58,15 @@ export const TRANSITIONS: Record<string, string[]> = {
 };
 
 // ผู้รับผิดชอบของแต่ละสถานะ (ใช้ทั้งตรวจสิทธิ์เปลี่ยนสถานะและหาผู้รับแจ้งเตือน SLA)
-export type Actor = 'requester' | 'tech' | 'supply' | 'approver';
+export type Actor = 'requester' | 'tech' | 'supply' | 'approver' | 'po_approver';
 export const STATUS_ACTOR: Record<string, Actor> = {
   NEW: 'tech',
   ACCEPTED: 'tech',
   IN_PROGRESS: 'tech',
   WAIT_PART: 'supply',
   PART_APPROVAL: 'supply',
+  PO_PENDING: 'po_approver',
+  PO_APPROVED: 'supply',
   PART_PURCHASING: 'supply',
   PART_ARRIVED: 'tech',
   WAIT_EXTERNAL: 'supply',
@@ -71,6 +86,8 @@ export const TARGET_ACTOR: Record<string, (Actor | 'any')[]> = {
   WAIT_EXTERNAL: ['tech'],
   DONE: ['tech'],
   PART_APPROVAL: ['supply'],
+  PO_PENDING: ['supply'],
+  PO_APPROVED: ['po_approver'],
   PART_PURCHASING: ['supply'],
   PART_ARRIVED: ['supply'],
   EXT_APPROVAL: ['supply'],
@@ -83,6 +100,7 @@ export const TARGET_ACTOR: Record<string, (Actor | 'any')[]> = {
 /** ผู้ที่เปลี่ยนจาก from → to ได้ (ขั้นตรวจรับ: ทั้งช่างและผู้แจ้งส่งกลับซ่อมได้) */
 export function targetActors(from: string, to: string): (Actor | 'any')[] {
   if (from === 'DONE' && to === 'IN_PROGRESS') return ['tech', 'requester'];
+  if (from === 'PO_PENDING' && to === 'PART_APPROVAL') return ['po_approver'];
   return TARGET_ACTOR[to] || ['any'];
 }
 
@@ -110,6 +128,8 @@ export function visibleTypes(u: CurrentUser): AssetType[] {
   if (u.permissions.includes('all') || u.permissions.includes('repair.all')) return ASSET_TYPES;
   // พัสดุรับเรื่องอะไหล่/ส่งซ่อมนอกของทุกประเภท
   if (u.permissions.includes('repair.supply')) return ASSET_TYPES;
+  // ผู้อนุมัติ PO ต้องเห็นใบซ่อมทุกประเภทที่รออนุมัติ
+  if (u.permissions.includes('repair.po.approve')) return ASSET_TYPES;
   return ASSET_TYPES.filter((t) => {
     const k = t.toLowerCase();
     return u.permissions.includes(`repair.${k}.request`) || u.permissions.includes(`repair.${k}.tech`);

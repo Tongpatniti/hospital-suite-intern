@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Button } from '@repo/ui/button';
+import { Input } from '@repo/ui/input';
 import { Label } from '@repo/ui/label';
 import { Textarea } from '@repo/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@repo/ui/card';
@@ -14,8 +15,10 @@ import {
   CLOSE_RESULT_LABEL,
   EVENT_LABEL,
   STATUS_LABEL,
+  TECH_HELD_STATUSES,
   URGENCY_LABEL,
   fmtHours,
+  isAdmin,
   type AssetType,
 } from '../lib/repair';
 import { fmtDateTimeTH } from '../lib/format';
@@ -24,7 +27,7 @@ import { AttachmentGallery, AttachmentPicker, type Attachment } from '../compone
 import { uploadPrepared, type PreparedFile } from '../lib/upload';
 import { useAuth } from '../contexts/AuthContext';
 import { ExternalFields, ExternalSummary, PartsForm, PartsTable, type External, type Part } from '../components/StepForms';
-import { emptyExternal, emptyPart, filledParts, partsReady, type ExternalForm, type PartRow } from '../lib/stepForms';
+import { emptyExternal, emptyPart, filledParts, partsReady, todayLocal, type ExternalForm, type PartRow } from '../lib/stepForms';
 
 interface History {
   history_id: number;
@@ -34,6 +37,26 @@ interface History {
   metadata: { event?: string; score?: number; close_result?: string } | null;
   changed_by_name: string | null;
   changed_at: string;
+}
+
+interface PurchaseOrder {
+  po_id: number;
+  po_no: string;
+  po_date: string | null;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  requested_by_name: string | null;
+  requested_at: string;
+  decided_by_name: string | null;
+  decided_at: string | null;
+  decision_remark: string | null;
+}
+
+interface Progress {
+  log_id: number;
+  note: string;
+  created_at: string;
+  person_id: number;
+  person_name: string;
 }
 
 interface Ticket {
@@ -54,7 +77,10 @@ interface Ticket {
   status: string;
   is_warranty: boolean;
   requester_name: string;
+  assignee_id: number | null;
   assignee_name: string | null;
+  done_by_name: string | null;
+  closed_by_name: string | null;
   duplicate_of_ticket_no: string | null;
   duplicate_reason: string | null;
   reopen_count: number;
@@ -71,9 +97,14 @@ interface Ticket {
   close_result: string | null;
   parts: Part[];
   externals: External[];
+  purchase_orders: PurchaseOrder[];
+  co_technicians: { person_id: number; person_name: string; added_at: string }[];
+  progress_logs: Progress[];
 }
 
-type ActionKind = 'confirm' | 'cancel' | 'done' | 'close' | 'sendBack' | 'parts' | 'extRequest' | 'extSend' | 'extReceive';
+interface TechOption { person_id: number; name: string }
+
+type ActionKind = 'confirm' | 'cancel' | 'done' | 'close' | 'sendBack' | 'parts' | 'po' | 'reject' | 'extRequest' | 'extSend' | 'extReceive';
 
 // ขั้นไหนต้องกรอกอะไรเพิ่ม — ที่เหลือมีแค่ปุ่มยืนยัน/ยกเลิก
 function actionKind(from: string, to: string): ActionKind {
@@ -82,6 +113,8 @@ function actionKind(from: string, to: string): ActionKind {
   if (to === 'CLOSED') return 'close';
   if (to === 'IN_PROGRESS' && (from === 'DONE' || from === 'CLOSED')) return 'sendBack';
   if (to === 'WAIT_PART') return 'parts';
+  if (to === 'PO_PENDING') return 'po';
+  if (to === 'PART_APPROVAL' && from === 'PO_PENDING') return 'reject';
   if (to === 'WAIT_EXTERNAL') return 'extRequest';
   if (to === 'EXT_SENT') return 'extSend';
   if (to === 'EXT_RECEIVED') return 'extReceive';
@@ -94,19 +127,28 @@ function actionLabel(from: string, to: string, fallback: string, isRequesterSide
   if (to === 'IN_PROGRESS' && from === 'DONE') return isRequesterSide ? 'ไม่ผ่าน ส่งกลับซ่อม' : 'ส่งกลับซ่อมอีกครั้ง';
   if (to === 'WAIT_PART') return 'สั่งซื้ออะไหล่';
   if (to === 'WAIT_EXTERNAL') return 'ส่งเรื่องซ่อมภายนอก';
-  if (to === 'PART_APPROVAL') return 'พัสดุรับเรื่องอะไหล่';
-  if (to === 'PART_PURCHASING') return 'อนุมัติ เริ่มจัดซื้อ';
+  if (to === 'PART_APPROVAL' && from !== 'PO_PENDING') return 'พัสดุรับเรื่องอะไหล่';
+  if (to === 'PO_PENDING') return 'ส่งขออนุมัติ PO';
+  if (to === 'PO_APPROVED') return 'อนุมัติ PO';
+  if (to === 'PART_APPROVAL' && from === 'PO_PENDING') return 'ไม่อนุมัติ PO';
+  if (to === 'PART_PURCHASING') return 'เริ่มจัดซื้ออะไหล่';
   if (to === 'PART_ARRIVED') return 'อะไหล่ถึงคลังแล้ว';
   if (to === 'EXT_APPROVAL') return 'พัสดุรับเรื่องส่งซ่อม';
   if (to === 'EXT_SENT') return 'ส่งร้านภายนอกแล้ว';
-  if (to === 'EXT_RECEIVED') return 'รับเครื่องคืนแล้ว';
+  if (to === 'EXT_RECEIVED') return 'รับอุปกรณ์คืนแล้ว';
   if (to === 'IN_PROGRESS' && from === 'PART_ARRIVED') return 'รับอะไหล่แล้ว ซ่อมต่อ';
-  if (to === 'IN_PROGRESS' && from === 'EXT_RECEIVED') return 'ตรวจรับเครื่องแล้ว ซ่อมต่อ';
+  if (to === 'IN_PROGRESS' && from === 'EXT_RECEIVED') return 'ตรวจรับอุปกรณ์และซ่อมต่อ';
   if (to === 'IN_PROGRESS') return 'เริ่มดำเนินงาน';
   if (to === 'CLOSED') return 'ตรวจรับและปิดงาน';
   if (to === 'DONE') return 'ซ่อมเสร็จ';
   return fallback;
 }
+
+const PO_STATUS_LABEL: Record<string, string> = {
+  PENDING: 'รออนุมัติ',
+  APPROVED: 'อนุมัติแล้ว',
+  REJECTED: 'ไม่อนุมัติ',
+};
 
 type TimelineItem =
   | { kind: 'history'; at: string; h: History }
@@ -119,12 +161,20 @@ const RepairDetail: React.FC = () => {
   const [remark, setRemark] = useState('');
   const [score, setScore] = useState(5);
   const [closeResult, setCloseResult] = useState('REPAIRED');
+  const [poNo, setPoNo] = useState('');
+  const [poDate, setPoDate] = useState(todayLocal());
   const [saving, setSaving] = useState(false);
   const [stepFiles, setStepFiles] = useState<PreparedFile[]>([]);
   const [extraFiles, setExtraFiles] = useState<PreparedFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [partRows, setPartRows] = useState<PartRow[]>([emptyPart()]);
   const [extForm, setExtForm] = useState<ExternalForm>(emptyExternal());
+  const [techs, setTechs] = useState<TechOption[]>([]);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferTo, setTransferTo] = useState('');
+  const [transferReason, setTransferReason] = useState('');
+  const [coTechPick, setCoTechPick] = useState('');
+  const [progressNote, setProgressNote] = useState('');
   const { user, hasPermission } = useAuth();
   const myId = Number(user?.id);
 
@@ -139,11 +189,29 @@ const RepairDetail: React.FC = () => {
 
   useEffect(() => { load(); }, [load]);
 
+  const isAdminUser = isAdmin(hasPermission);
+  const isAssignee = !!t && t.assignee_id === myId;
+  const isCoTech = !!t && t.co_technicians.some((c) => c.person_id === myId);
+  const isTeam = isAssignee || isCoTech || isAdminUser;
+  const techHeld = !!t && TECH_HELD_STATUSES.includes(t.status);
+  const canManageTeam = techHeld && (isAssignee || isAdminUser);
+  const canRecordProgress = !!t && t.status === 'IN_PROGRESS' && isTeam;
+
+  useEffect(() => {
+    if (!t || !canManageTeam) { setTechs([]); return; }
+    api.get('/api/repair-technicians', { params: { asset_type: t.asset_type } })
+      .then((res) => setTechs(res.data.data))
+      .catch(() => setTechs([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t?.ticket_id, t?.asset_type, canManageTeam]);
+
   const openAction = (a: { code: string; label: string }) => {
     setAction(a);
     setRemark('');
     setScore(5);
     setCloseResult('REPAIRED');
+    setPoNo('');
+    setPoDate(todayLocal());
     setStepFiles([]);
     setPartRows([emptyPart()]);
     setExtForm(emptyExternal());
@@ -184,6 +252,7 @@ const RepairDetail: React.FC = () => {
         close_result: action.code === 'DONE' ? closeResult : undefined,
         attachment_ids: uploadedIds,
         parts,
+        po: action.code === 'PO_PENDING' ? { po_no: poNo.trim(), po_date: poDate || null } : undefined,
         external: ['WAIT_EXTERNAL', 'EXT_SENT', 'EXT_RECEIVED'].includes(action.code)
           ? {
               ...extForm,
@@ -227,6 +296,40 @@ const RepairDetail: React.FC = () => {
     }
   };
 
+  const runTeamAction = async (fn: () => Promise<unknown>, okMessage: string) => {
+    try {
+      await fn();
+      toast({ title: okMessage });
+      load();
+    } catch (err) {
+      toast({ title: errorMessage(err, 'ทำรายการไม่สำเร็จ'), variant: 'destructive' });
+    }
+  };
+
+  const submitTransfer = async () => {
+    if (!t) return;
+    await runTeamAction(async () => {
+      await api.post(`/api/repairs/${t.ticket_id}/transfer`, { to_person_id: Number(transferTo), reason: transferReason.trim() });
+      setTransferOpen(false);
+    }, 'โอนงานแล้ว');
+  };
+
+  const addCoTech = async () => {
+    if (!t || !coTechPick) return;
+    await runTeamAction(async () => {
+      await api.post(`/api/repairs/${t.ticket_id}/co-technicians`, { person_id: Number(coTechPick) });
+      setCoTechPick('');
+    }, 'เพิ่มผู้ร่วมซ่อมแล้ว');
+  };
+
+  const submitProgress = async () => {
+    if (!t || !progressNote.trim()) return;
+    await runTeamAction(async () => {
+      await api.post(`/api/repairs/${t.ticket_id}/progress`, { note: progressNote.trim() });
+      setProgressNote('');
+    }, 'บันทึกความคืบหน้าแล้ว');
+  };
+
   if (!t) return <p className="text-slate-400">กำลังโหลด...</p>;
 
   const timeline: TimelineItem[] = [
@@ -235,20 +338,24 @@ const RepairDetail: React.FC = () => {
   ].sort((x, y) => new Date(y.at).getTime() - new Date(x.at).getTime());
 
   const kind: ActionKind = action ? actionKind(t.status, action.code) : 'confirm';
-  const needRemark = kind === 'cancel' || kind === 'done' || kind === 'sendBack' || kind === 'extRequest';
+  const needRemark = kind === 'cancel' || kind === 'done' || kind === 'sendBack' || kind === 'extRequest' || kind === 'reject';
   const canSubmit = !saving
     && (!needRemark || remark.trim() !== '')
     && (kind !== 'parts' || partsReady(partRows))
+    && (kind !== 'po' || poNo.trim() !== '')
     && (kind !== 'extSend' || (extForm.vendor_name.trim() !== '' && extForm.sent_date !== ''))
-    && (kind !== 'extReceive' || extForm.return_date !== '');
-  const showFiles = kind === 'done' || kind === 'extRequest'; // อะไหล่แนบรูปแยกในแต่ละรายการ
-  const isTechSide = hasPermission(`repair.${t.asset_type.toLowerCase()}.tech`) || hasPermission('repair.all');
+    && (kind !== 'extReceive' || (extForm.return_date !== '' && extForm.actual_cost.trim() !== ''));
+  const showFiles = kind === 'done' || kind === 'extRequest' || kind === 'po';
+  const isTechSide = hasPermission(`repair.${t.asset_type.toLowerCase()}.tech`) || isAdminUser;
   const isRequesterSide = t.requester_id === myId && !isTechSide;
   const label = (code: string, fallback: string) => actionLabel(t.status, code, fallback, isRequesterSide);
   const isOpen = !['CLOSED', 'CANCELLED'].includes(t.status);
   const stepFilesOf = (historyId: number) =>
     t.attachments.filter((a) => a.reference_type === 'STATUS' && a.reference_id === historyId);
   const ticketFiles = t.attachments.filter((a) => a.reference_type !== 'STATUS' && a.reference_type !== 'PART');
+  const coTechIds = new Set(t.co_technicians.map((c) => c.person_id));
+  const transferCandidates = techs.filter((p) => p.person_id !== t.assignee_id);
+  const coTechCandidates = techs.filter((p) => p.person_id !== t.assignee_id && !coTechIds.has(p.person_id));
 
   return (
     <div className="space-y-4">
@@ -265,6 +372,11 @@ const RepairDetail: React.FC = () => {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={toggleWatch}>{t.is_watching ? 'เลิกติดตาม' : 'ติดตามใบนี้'}</Button>
+          {canManageTeam && (
+            <Button variant="outline" onClick={() => { setTransferTo(''); setTransferReason(''); setTransferOpen(true); }}>
+              โอนงานให้ช่างคนอื่น
+            </Button>
+          )}
           {t.allowed_transitions.map((a) => (
             <Button
               key={a.code}
@@ -324,6 +436,61 @@ const RepairDetail: React.FC = () => {
         </Card>
 
         <div className="space-y-4">
+          {(canRecordProgress || t.progress_logs.length > 0) && (
+            <Card>
+              <CardHeader><CardTitle className="text-base">ความคืบหน้าการซ่อม ({t.progress_logs.length})</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                {canRecordProgress && (
+                  <div className="space-y-2">
+                    <Textarea rows={2} placeholder="บันทึกสิ่งที่ดำเนินการ / ความคืบหน้า" value={progressNote} onChange={(e) => setProgressNote(e.target.value)} />
+                    <Button onClick={submitProgress} disabled={!progressNote.trim()} className="w-full bg-teal-700 hover:bg-teal-800">บันทึกความคืบหน้า</Button>
+                  </div>
+                )}
+                {t.progress_logs.length === 0 && <p className="text-sm text-slate-400">ยังไม่มีการบันทึกความคืบหน้า</p>}
+                <ol className="space-y-3">
+                  {[...t.progress_logs].reverse().map((p) => (
+                    <li key={p.log_id} className="relative border-l-2 border-teal-200 pl-4">
+                      <span className="absolute -left-[7px] top-1.5 h-3 w-3 rounded-full bg-teal-600" />
+                      <p className="text-xs text-slate-500">{fmtDateTimeTH(p.created_at)} · {p.person_name}</p>
+                      <p className="whitespace-pre-line text-sm text-slate-700">{p.note}</p>
+                    </li>
+                  ))}
+                </ol>
+              </CardContent>
+            </Card>
+          )}
+
+          {(t.co_technicians.length > 0 || canManageTeam) && (
+            <Card>
+              <CardHeader><CardTitle className="text-base">ผู้ร่วมซ่อม ({t.co_technicians.length})</CardTitle></CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                {t.co_technicians.length === 0 && <p className="text-slate-400">ยังไม่มีผู้ร่วมซ่อม</p>}
+                {t.co_technicians.map((c) => (
+                  <div key={c.person_id} className="flex items-center justify-between gap-2">
+                    <span>{c.person_name}</span>
+                    {canManageTeam && (
+                      <button
+                        className="text-xs text-red-600 hover:underline"
+                        onClick={() => runTeamAction(() => api.delete(`/api/repairs/${t.ticket_id}/co-technicians/${c.person_id}`), 'นำผู้ร่วมซ่อมออกแล้ว')}
+                      >
+                        นำออก
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {canManageTeam && (
+                  <div className="flex gap-2 pt-2">
+                    <select className="h-9 flex-1 rounded-md border px-2 text-sm" value={coTechPick} onChange={(e) => setCoTechPick(e.target.value)} aria-label="เลือกผู้ร่วมซ่อม">
+                      <option value="">— เลือกช่างเพิ่มเป็นผู้ร่วมซ่อม —</option>
+                      {coTechCandidates.map((p) => <option key={p.person_id} value={p.person_id}>{p.name}</option>)}
+                    </select>
+                    <Button variant="outline" onClick={addCoTech} disabled={!coTechPick}>เพิ่ม</Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {t.parts.length > 0 && (
             <Card>
               <CardHeader><CardTitle className="text-base">รายการอะไหล่ที่ขอซื้อ</CardTitle></CardHeader>
@@ -332,9 +499,38 @@ const RepairDetail: React.FC = () => {
                   ticketId={t.ticket_id}
                   parts={t.parts}
                   attachments={t.attachments}
-                  canEditPrice={hasPermission('repair.supply') && ['WAIT_PART', 'PART_APPROVAL', 'PART_PURCHASING', 'PART_ARRIVED'].includes(t.status)}
+                  canEditPrice={hasPermission('repair.supply') && ['WAIT_PART', 'PART_APPROVAL', 'PO_PENDING', 'PO_APPROVED', 'PART_PURCHASING', 'PART_ARRIVED'].includes(t.status)}
                   onSaved={load}
                 />
+              </CardContent>
+            </Card>
+          )}
+
+          {t.purchase_orders.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle className="text-base">ใบสั่งซื้อ (PO)</CardTitle></CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                {t.purchase_orders.map((po) => (
+                  <div key={po.po_id} className="rounded-md border p-3">
+                    <p className="font-mono">{po.po_no}
+                      <span className={cn('ml-2 rounded-full px-2 py-0.5 text-xs',
+                        po.status === 'APPROVED' ? 'bg-emerald-100 text-emerald-800'
+                          : po.status === 'REJECTED' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800')}>
+                        {PO_STATUS_LABEL[po.status]}
+                      </span>
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {po.po_date ? `วันที่ PO ${po.po_date.slice(0, 10)} · ` : ''}
+                      ขอโดย {po.requested_by_name || '-'} เมื่อ {fmtDateTimeTH(po.requested_at)}
+                    </p>
+                    {po.decided_at && (
+                      <p className="text-xs text-slate-500">
+                        ผลการพิจารณาโดย {po.decided_by_name || '-'} เมื่อ {fmtDateTimeTH(po.decided_at)}
+                        {po.decision_remark && ` · ${po.decision_remark}`}
+                      </p>
+                    )}
+                  </div>
+                ))}
               </CardContent>
             </Card>
           )}
@@ -373,7 +569,9 @@ const RepairDetail: React.FC = () => {
                 <dt className="text-slate-500">ผู้ดูแล</dt><dd>{t.custodian_name_snapshot || '-'}</dd>
                 <dt className="text-slate-500">สถานที่</dt><dd>{t.location_snapshot || '-'}</dd>
                 <dt className="text-slate-500">ผู้แจ้ง</dt><dd>{t.requester_name}</dd>
-                <dt className="text-slate-500">ช่าง</dt><dd>{t.assignee_name || '-'}</dd>
+                <dt className="text-slate-500">ช่างผู้รับผิดชอบ</dt><dd>{t.assignee_name || '-'}</dd>
+                <dt className="text-slate-500">ผู้ซ่อมเสร็จ</dt><dd>{t.done_by_name || '-'}</dd>
+                <dt className="text-slate-500">ผู้ปิดงาน</dt><dd>{t.closed_by_name || '-'}</dd>
                 {t.asset_id && (
                   <>
                     <dt className="text-slate-500">สถานะในทะเบียน</dt>
@@ -428,6 +626,32 @@ const RepairDetail: React.FC = () => {
         </div>
       </div>
 
+      <Dialog open={transferOpen} onOpenChange={(o) => !o && setTransferOpen(false)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader><DialogTitle>โอนงานให้ช่างคนอื่น</DialogTitle></DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-slate-600">
+              เลือกช่างที่มีสิทธิ์รับงาน{ASSET_TYPE_LABEL[t.asset_type]} ระบบจะเปลี่ยนชื่อผู้รับผิดชอบเป็นช่างที่รับโอน
+            </p>
+            <div className="space-y-1">
+              <Label htmlFor="transferTo">ช่างที่รับโอน *</Label>
+              <select id="transferTo" className="h-10 w-full rounded-md border px-2 text-sm" value={transferTo} onChange={(e) => setTransferTo(e.target.value)}>
+                <option value="">— เลือกช่าง —</option>
+                {transferCandidates.map((p) => <option key={p.person_id} value={p.person_id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="transferReason">เหตุผลการโอน</Label>
+              <Textarea id="transferReason" rows={3} value={transferReason} onChange={(e) => setTransferReason(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTransferOpen(false)}>ยกเลิก</Button>
+            <Button onClick={submitTransfer} disabled={!transferTo} className="bg-teal-700 hover:bg-teal-800">ยืนยันการโอนงาน</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!action} onOpenChange={(o) => !o && setAction(null)}>
         <DialogContent className={kind === 'parts' ? 'sm:max-w-3xl' : 'sm:max-w-lg'}>
           <DialogHeader><DialogTitle>{kind === 'confirm' ? 'ยืนยันเปลี่ยนสถานะ' : action?.label}</DialogTitle></DialogHeader>
@@ -459,6 +683,18 @@ const RepairDetail: React.FC = () => {
               </div>
             )}
             {kind === 'parts' && <PartsForm rows={partRows} onChange={setPartRows} />}
+            {kind === 'po' && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="poNo">เลขที่ใบสั่งซื้อ PO *</Label>
+                  <Input id="poNo" value={poNo} onChange={(e) => setPoNo(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="poDate">วันที่ PO</Label>
+                  <Input id="poDate" type="date" value={poDate} max={todayLocal()} onChange={(e) => setPoDate(e.target.value)} />
+                </div>
+              </div>
+            )}
             {kind === 'extRequest' && <ExternalFields step="request" form={extForm} onChange={setExtForm} />}
             {kind === 'extSend' && <ExternalFields step="send" form={extForm} onChange={setExtForm} />}
             {kind === 'extReceive' && <ExternalFields step="receive" form={extForm} onChange={setExtForm} />}
@@ -469,6 +705,7 @@ const RepairDetail: React.FC = () => {
                     : kind === 'done' ? 'สิ่งที่ซ่อม / ผลการซ่อม (บังคับ)'
                     : kind === 'sendBack' ? 'เหตุผลที่ส่งกลับซ่อม (บังคับ)'
                     : kind === 'extRequest' ? 'อาการ / เหตุผลที่ต้องส่งซ่อมภายนอก (บังคับ)'
+                    : kind === 'reject' ? 'เหตุผลที่ไม่อนุมัติ PO (บังคับ)'
                     : kind === 'close' ? 'ความเห็นเพิ่มเติม'
                     : 'หมายเหตุ'}
                 </Label>
@@ -477,8 +714,12 @@ const RepairDetail: React.FC = () => {
             )}
             {showFiles && (
               <div className="space-y-1">
-                <Label>{kind === 'done' ? 'รูปผลการซ่อม (ไม่บังคับ)' : 'รูปประกอบ (ไม่บังคับ)'}</Label>
-                <AttachmentPicker files={stepFiles} onChange={setStepFiles} imagesOnly />
+                <Label>
+                  {kind === 'done' ? 'รูปผลการซ่อม (ไม่บังคับ)'
+                    : kind === 'po' ? 'เอกสารใบสั่งซื้อ PO (ไม่บังคับ)'
+                    : 'รูปประกอบ (ไม่บังคับ)'}
+                </Label>
+                <AttachmentPicker files={stepFiles} onChange={setStepFiles} imagesOnly={kind !== 'po'} />
               </div>
             )}
             {action?.code === 'ACCEPTED' && t.asset_id && (
@@ -488,7 +729,7 @@ const RepairDetail: React.FC = () => {
           <DialogFooter>
             <Button variant="outline" onClick={() => setAction(null)} disabled={saving}>ยกเลิก</Button>
             <Button onClick={submitAction} disabled={!canSubmit}
-              className={kind === 'cancel' ? 'bg-red-600 hover:bg-red-700' : 'bg-teal-700 hover:bg-teal-800'}>
+              className={kind === 'cancel' || kind === 'reject' ? 'bg-red-600 hover:bg-red-700' : 'bg-teal-700 hover:bg-teal-800'}>
               {saving ? 'กำลังบันทึก...' : 'ยืนยัน'}
             </Button>
           </DialogFooter>

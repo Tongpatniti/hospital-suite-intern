@@ -7,11 +7,12 @@
     "dev": "turbo run dev --parallel",
     "build": "turbo run build",
     "lint": "turbo run lint",
-    "typecheck": "pnpm --filter backend --filter hub --filter example-app exec tsc -b",
+    "typecheck": "pnpm --filter backend --filter hub --filter example-app --filter repair-app exec tsc -b",
     "db:setup": "pnpm --filter backend db:setup",
     "backend": "pnpm --filter backend dev",
     "hub": "pnpm --filter hub dev",
-    "example": "pnpm --filter example-app dev"
+    "example": "pnpm --filter example-app dev",
+    "repair": "pnpm --filter repair-app dev"
   },
   "keywords": [],
   "author": "",

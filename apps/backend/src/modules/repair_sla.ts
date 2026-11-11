@@ -43,6 +43,7 @@ async function currentActors(t: Due): Promise<number[]> {
   if (actor === 'tech') return t.assignee_id ? [t.assignee_id] : personsWithPermission(mtpPool, techPermission(t.asset_type));
   if (actor === 'supply') return personsWithPermission(mtpPool, 'repair.supply');
   if (actor === 'approver') return personsWithPermission(mtpPool, 'repair.approve');
+  if (actor === 'po_approver') return personsWithPermission(mtpPool, 'repair.po.approve');
   return [];
 }
 

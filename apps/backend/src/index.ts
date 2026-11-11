@@ -7,6 +7,7 @@ import { repairRoutes } from './modules/repair';
 import { repairAttachmentRoutes } from './modules/repair_attachments';
 import { repairStepRoutes } from './modules/repair_steps';
 import { repairHistoryRoutes } from './modules/repair_history';
+import { repairTeamRoutes } from './modules/repair_team';
 import { runSlaScan, startSlaScheduler } from './modules/repair_sla';
 import { can, getCurrentUser } from './modules/repair_common';
 
@@ -37,6 +38,7 @@ repairRoutes(app);
 repairAttachmentRoutes(app);
 repairStepRoutes(app);
 repairHistoryRoutes(app);
+repairTeamRoutes(app);
 
 // สั่งตรวจงานค้างทันที (สำหรับทดสอบ) — ต้องมีสิทธิ์ repair.settings
 app.post('/api/repair-sla/run', async (req, res) => {
