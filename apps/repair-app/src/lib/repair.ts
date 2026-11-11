@@ -11,13 +11,15 @@ export const STATUS_LABEL: Record<string, string> = {
   ACCEPTED: 'รับงานซ่อม',
   IN_PROGRESS: 'กำลังดำเนินงาน',
   WAIT_PART: 'สั่งซื้ออะไหล่',
-  PART_APPROVAL: 'รออนุมัติอะไหล่',
+  PART_APPROVAL: 'พัสดุรับเรื่องอะไหล่',
+  PO_PENDING: 'รออนุมัติ PO',
+  PO_APPROVED: 'ได้รับการอนุมัติ PO แล้ว',
   PART_PURCHASING: 'กำลังจัดซื้ออะไหล่',
   PART_ARRIVED: 'อะไหล่ถึงคลัง',
   WAIT_EXTERNAL: 'แจ้งส่งซ่อมภายนอก',
   EXT_APPROVAL: 'รออนุมัติส่งซ่อม',
   EXT_SENT: 'ส่งร้านภายนอกแล้ว',
-  EXT_RECEIVED: 'รับเครื่องคืนแล้ว',
+  EXT_RECEIVED: 'รับอุปกรณ์คืนแล้ว',
   DONE: 'รอตรวจรับ',
   CLOSED: 'ปิดงาน',
   CANCELLED: 'ยกเลิก',
@@ -56,17 +58,46 @@ export const EVENT_LABEL: Record<string, string> = {
   EXT_INSPECTED: 'ช่างตรวจรับเครื่องจากร้านภายนอกแล้ว',
   DUPLICATE_WATCH: 'มีผู้แจ้งปัญหาเดียวกันเพิ่ม',
   REOPEN: 'เปิดงานซ่อมอีกครั้ง',
+  TRANSFER: 'โอนงานให้ช่างคนใหม่',
+  CO_TECH_ADDED: 'เพิ่มผู้ร่วมซ่อม',
+  CO_TECH_REMOVED: 'นำผู้ร่วมซ่อมออก',
+  PO_REJECTED: 'ไม่อนุมัติ PO ส่งกลับให้พัสดุตรวจสอบอีกครั้ง',
+};
+
+// สถานะที่พัสดุดำเนินการ (ตรงกับ SUPPLY_STATUSES ฝั่ง backend)
+export const SUPPLY_STATUSES = [
+  'WAIT_PART', 'PART_APPROVAL', 'PO_PENDING', 'PO_APPROVED', 'PART_PURCHASING', 'PART_ARRIVED',
+  'WAIT_EXTERNAL', 'EXT_APPROVAL', 'EXT_SENT',
+];
+
+// สถานะที่ช่างผู้รับผิดชอบยังถือใบงานอยู่ (ตรงกับ TECH_HELD_STATUSES ฝั่ง backend)
+export const TECH_HELD_STATUSES = ['ACCEPTED', 'IN_PROGRESS', 'WAIT_PART', 'WAIT_EXTERNAL', 'PART_ARRIVED', 'EXT_RECEIVED'];
+
+type HasPermission = (permission: string) => boolean;
+
+export const isAdmin = (has: HasPermission) => has('repair.all');
+export const canRequestType = (has: HasPermission, t: AssetType) =>
+  isAdmin(has) || has(`repair.${t.toLowerCase()}.request`);
+export const isTechOf = (has: HasPermission, t: AssetType) =>
+  isAdmin(has) || has(`repair.${t.toLowerCase()}.tech`);
+export const canViewType = (has: HasPermission, t: AssetType) =>
+  isTechOf(has, t) || canRequestType(has, t) || has('repair.supply') || has('repair.po.approve');
+export const hasAnyTech = (has: HasPermission) => (Object.keys(ASSET_TYPE_LABEL) as AssetType[]).some((t) => isTechOf(has, t));
+
+export const TYPE_LIST_LABEL: Record<AssetType, string> = {
+  COMPUTER: 'คอมพิวเตอร์',
+  MEDICAL: 'เครื่องมือแพทย์',
+  GENERAL: 'ทั่วไป',
 };
 
 export function fmtHours(h: number) {
   return h >= 48 ? `${(h / 24).toFixed(1)} วัน` : `${Math.floor(h)} ชม.`;
 }
 
-export type SlaLevel = 'ok' | 'near' | 'over' | 'escalated' | 'none';
+export type SlaLevel = 'ok' | 'near' | 'over' | 'none';
 
-export function slaLevel(hours: number, warn: number | null, esc: number | null): SlaLevel {
+export function slaLevel(hours: number, warn: number | null): SlaLevel {
   if (!warn) return 'none';
-  if (esc && hours >= esc) return 'escalated';
   if (hours >= warn) return 'over';
   if (hours >= warn * 0.8) return 'near';
   return 'ok';

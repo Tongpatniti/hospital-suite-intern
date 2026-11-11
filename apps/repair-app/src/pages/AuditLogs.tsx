@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { toast } from '@repo/ui/use-toast';
 import api, { errorMessage } from '../lib/api';
 import { fmtDateTimeTH } from '../lib/format';
+import { todayLocal } from '../lib/stepForms';
 
 interface Log {
   log_id: number;
@@ -33,8 +34,8 @@ const show = (v: unknown) => (v === null || v === undefined ? '∅' : typeof v =
 const AuditLogs: React.FC = () => {
   const [rows, setRows] = useState<Log[]>([]);
   const [table, setTable] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  const [from, setFrom] = useState(todayLocal());
+  const [to, setTo] = useState(todayLocal());
 
   const load = useCallback(async () => {
     try {

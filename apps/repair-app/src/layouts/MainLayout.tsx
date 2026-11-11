@@ -2,12 +2,29 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '@repo/ui/button';
-import { ArrowLeft, Bell, ClipboardList, History, LogOut, Plus, Settings, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Bell, Building2, ClipboardList, History, LogOut, Monitor, Settings, ShieldCheck, Stethoscope } from 'lucide-react';
 import { cn } from '@repo/ui/utils';
 import api from '../lib/api';
 import { fmtDateTimeTH } from '../lib/format';
+import { canRequestType, canViewType, type AssetType } from '../lib/repair';
 
 interface Notification { notification_id: number; ticket_id: number | null; type: string; title: string; message: string | null; is_read: boolean; created_at: string }
+
+const SHORT_LABEL: Record<AssetType, string> = {
+  GENERAL: 'ทั่วไป',
+  COMPUTER: 'คอมพิวเตอร์',
+  MEDICAL: 'เครื่องมือแพทย์',
+};
+
+const TYPE_ORDER: AssetType[] = ['GENERAL', 'COMPUTER', 'MEDICAL'];
+
+const TYPE_ICON: Record<AssetType, React.ReactNode> = {
+  GENERAL: <Building2 size={18} />,
+  COMPUTER: <Monitor size={18} />,
+  MEDICAL: <Stethoscope size={18} />,
+};
+
+interface NavItem { label: string; icon?: React.ReactNode; path: string; query?: string }
 
 const MainLayout: React.FC = () => {
   const location = useLocation();
@@ -17,10 +34,13 @@ const MainLayout: React.FC = () => {
   const [unread, setUnread] = useState(0);
   const [showNotes, setShowNotes] = useState(false);
 
-  const navItems = [
-    { label: 'งานซ่อม', icon: <ClipboardList size={20} />, path: '/repairs', exact: true },
-    { label: 'แจ้งซ่อม', icon: <Plus size={20} />, path: '/repairs/new', exact: true },
-    { label: 'ประวัติรายเครื่อง', icon: <History size={20} />, path: '/assets' },
+  const submitItems: NavItem[] = TYPE_ORDER.filter((t) => canRequestType(hasPermission, t))
+    .map((t) => ({ label: `แจ้งซ่อม${SHORT_LABEL[t]}`, icon: TYPE_ICON[t], path: '/repairs/new', query: `?type=${t}` }));
+  const listItems: NavItem[] = TYPE_ORDER.filter((t) => canViewType(hasPermission, t))
+    .map((t) => ({ label: `รายการแจ้งซ่อม${SHORT_LABEL[t]}`, icon: TYPE_ICON[t], path: '/repairs', query: `?type=${t}` }));
+
+  const utilityItems: NavItem[] = [
+    { label: 'ประวัติการซ่อม', icon: <History size={20} />, path: '/assets' },
     ...(hasPermission('repair.audit.view') ? [{ label: 'ประวัติการแก้ไข', icon: <ShieldCheck size={20} />, path: '/audit' }] : []),
     { label: 'ตั้งค่าระบบ', icon: <Settings size={20} />, path: '/settings' },
   ];
@@ -47,6 +67,31 @@ const MainLayout: React.FC = () => {
     navigate('/login');
   };
 
+  const renderItem = (item: NavItem) => {
+    const active = item.query
+      ? location.pathname === item.path && location.search === item.query
+      : item.path === '/assets' ? location.pathname.startsWith(item.path)
+      : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
+    return (
+      <Link key={`${item.path}${item.query || ''}`} to={`${item.path}${item.query || ''}`}
+        className={cn('flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+          active ? 'bg-teal-50 text-teal-800' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900')}>
+        {item.icon}
+        {item.label}
+      </Link>
+    );
+  };
+
+  const renderGroup = (title: string, items: NavItem[]) => {
+    if (items.length === 0) return null;
+    return (
+      <div className="space-y-1 pt-3">
+        <p className="px-3 pb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">{title}</p>
+        {items.map(renderItem)}
+      </div>
+    );
+  };
+
   return (
     <div className="flex h-screen bg-slate-100 overflow-hidden">
       <aside className="w-64 bg-white border-r flex flex-col shrink-0">
@@ -54,27 +99,22 @@ const MainLayout: React.FC = () => {
           <h1 className="text-xl font-bold text-teal-800">ระบบแจ้งซ่อม</h1>
           <p className="text-xs text-slate-400 mt-1">Computer · Medical · General</p>
         </div>
-        <nav className="flex-1 p-4 space-y-1">
+        <nav className="flex-1 overflow-y-auto p-4 space-y-1">
           <div className="pb-2">
             <a href={hubUrl} className="flex items-center gap-2 w-full px-3 py-2 text-xs font-medium text-slate-600 bg-slate-50 rounded-lg hover:bg-teal-50 hover:text-teal-800 transition-colors">
               <ArrowLeft size={16} />
               Back to Hub
             </a>
+            <Link to="/repairs"
+              className={cn('mt-2 flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                location.pathname === '/repairs' && !location.search ? 'bg-teal-50 text-teal-800' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900')}>
+              <ClipboardList size={20} />
+              รายการแจ้งซ่อม
+            </Link>
           </div>
-          {navItems.map((item) => {
-            const p = location.pathname;
-            const active = item.exact
-              ? p === item.path || (item.path === '/repairs' && /^\/repairs\/\d+/.test(p))
-              : p.startsWith(item.path);
-            return (
-              <Link key={item.path} to={item.path}
-                className={cn('flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                  active ? 'bg-teal-50 text-teal-800' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900')}>
-                {item.icon}
-                {item.label}
-              </Link>
-            );
-          })}
+          {renderGroup('แจ้งซ่อม', submitItems)}
+          {renderGroup('รายการการแจ้งซ่อม', listItems)}
+          {renderGroup('ทั่วไป', utilityItems)}
         </nav>
         <div className="p-4 border-t space-y-2 bg-slate-50/50">
           <div className="px-4 py-2 flex flex-col">

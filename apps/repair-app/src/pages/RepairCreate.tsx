@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@repo/ui/button';
 import { Input } from '@repo/ui/input';
@@ -7,10 +7,13 @@ import { Label } from '@repo/ui/label';
 import { Textarea } from '@repo/ui/textarea';
 import { Card, CardContent } from '@repo/ui/card';
 import { toast } from '@repo/ui/use-toast';
+import { cn } from '@repo/ui/utils';
 import api, { errorMessage } from '../lib/api';
-import { ASSET_TYPE_LABEL, STATUS_LABEL, type AssetType } from '../lib/repair';
+import { ASSET_TYPE_LABEL, STATUS_LABEL, TYPE_LIST_LABEL, canRequestType, type AssetType } from '../lib/repair';
 import { fmtDateTimeTH } from '../lib/format';
 import { useAuth } from '../contexts/AuthContext';
+import { AttachmentPicker } from '../components/Attachments';
+import { uploadPrepared, type PreparedFile } from '../lib/upload';
 
 interface AssetOption {
   asset_id: number;
@@ -34,12 +37,14 @@ interface OpenTicket {
 
 const RepairCreate: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { hasPermission } = useAuth();
+  const urlType = (searchParams.get('type') || '') as AssetType | '';
   const [assets, setAssets] = useState<AssetOption[]>([]);
   const [assetQ, setAssetQ] = useState('');
   const [assetId, setAssetId] = useState<string>('');
   const [noAsset, setNoAsset] = useState(false);
-  const [assetType, setAssetType] = useState<AssetType>('GENERAL');
+  const [assetType, setAssetType] = useState<AssetType>(urlType || 'GENERAL');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [urgency, setUrgency] = useState('NORMAL');
@@ -48,10 +53,10 @@ const RepairCreate: React.FC = () => {
   const [dupMode, setDupMode] = useState<'none' | 'new'>('none');
   const [dupReason, setDupReason] = useState('');
   const [saving, setSaving] = useState(false);
+  const [files, setFiles] = useState<PreparedFile[]>([]);
 
-  const requestTypes = (Object.keys(ASSET_TYPE_LABEL) as AssetType[]).filter((t) =>
-    hasPermission(`repair.${t.toLowerCase()}.request`) || hasPermission('repair.all')
-  );
+  const requestTypes = (Object.keys(ASSET_TYPE_LABEL) as AssetType[]).filter((t) => canRequestType(hasPermission, t));
+  const visibleAssets = urlType ? assets.filter((a) => a.asset_type === urlType) : assets;
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -82,6 +87,7 @@ const RepairCreate: React.FC = () => {
     const t = openTickets[0];
     try {
       await api.post(`/api/repairs/${t.ticket_id}/watchers`, { source: 'DUPLICATE', note: description });
+      if (files.length > 0) await uploadPrepared(t.ticket_id, files, 'TICKET');
       toast({ title: `เพิ่มคุณเป็นผู้ติดตาม ${t.ticket_no} แล้ว` });
       navigate(`/repairs/${t.ticket_id}`);
     } catch (err) {
@@ -109,8 +115,17 @@ const RepairCreate: React.FC = () => {
         duplicate_of_ticket_id: openTickets.length > 0 ? openTickets[0].ticket_id : undefined,
         duplicate_reason: openTickets.length > 0 ? dupReason : undefined,
       });
-      toast({ title: `สร้างใบแจ้งซ่อม ${res.data.data.ticket_no} แล้ว` });
-      navigate(`/repairs/${res.data.data.ticket_id}`);
+      const created = res.data.data;
+      if (files.length > 0) {
+        const up = await uploadPrepared(created.ticket_id, files, 'TICKET');
+        if (up.errors.length > 0) {
+          toast({ title: `สร้างใบ ${created.ticket_no} แล้ว แต่แนบไฟล์ไม่สำเร็จ ${up.errors.length} ไฟล์`, description: up.errors.join('\n'), variant: 'destructive' });
+          navigate(`/repairs/${created.ticket_id}`);
+          return;
+        }
+      }
+      toast({ title: `สร้างใบแจ้งซ่อม ${created.ticket_no} แล้ว` });
+      navigate(`/repairs/${created.ticket_id}`);
     } catch (err) {
       const data = (err as { response?: { data?: { code?: string; open_tickets?: OpenTicket[] } } }).response?.data;
       if (data?.code === 'OPEN_TICKET_EXISTS' && data.open_tickets) setOpenTickets(data.open_tickets);
@@ -123,7 +138,9 @@ const RepairCreate: React.FC = () => {
   return (
     <div className="max-w-3xl space-y-4">
       <div>
-        <h1 className="text-2xl font-bold text-slate-800">แจ้งซ่อม</h1>
+        <h1 className="text-2xl font-bold text-slate-800">
+          {urlType ? `แจ้งซ่อม${TYPE_LIST_LABEL[urlType]}` : 'แจ้งซ่อม'}
+        </h1>
         <p className="text-sm text-slate-500">ระบบจะตรวจว่าเครื่องนี้มีใบซ่อมที่ยังไม่ปิดหรือไม่ก่อนส่ง</p>
       </div>
       <Card>
@@ -139,13 +156,13 @@ const RepairCreate: React.FC = () => {
                 <>
                   <Input id="assetQ" placeholder="ค้นหารหัสหรือชื่อครุภัณฑ์" value={assetQ} onChange={(e) => setAssetQ(e.target.value)} />
                   <select
-                    className="h-10 w-full rounded-md border px-2 text-sm"
+                    className="h-10 w-full rounded-md border bg-white px-2 text-sm"
                     value={assetId}
                     onChange={(e) => setAssetId(e.target.value)}
                     aria-label="เลือกครุภัณฑ์"
                   >
-                    <option value="">— เลือกครุภัณฑ์ ({assets.length} รายการ) —</option>
-                    {assets.map((a) => (
+                    <option value="">— เลือกครุภัณฑ์ ({visibleAssets.length} รายการ) —</option>
+                    {visibleAssets.map((a) => (
                       <option key={a.asset_id} value={a.asset_id}>
                         {a.asset_code} · {a.name} ({ASSET_TYPE_LABEL[a.asset_type]}){a.open_ticket_no ? ` · ค้าง ${a.open_ticket_no}` : ''}
                       </option>
@@ -189,7 +206,13 @@ const RepairCreate: React.FC = () => {
                 </div>
                 <div className="space-y-1">
                   <Label htmlFor="assetType">ประเภทงาน</Label>
-                  <select id="assetType" className="h-10 w-full rounded-md border px-2 text-sm" value={assetType} onChange={(e) => setAssetType(e.target.value as AssetType)}>
+                  <select
+                    id="assetType"
+                    className={cn('h-10 w-full rounded-md border px-2 text-sm', urlType && 'cursor-not-allowed bg-slate-100 text-slate-500')}
+                    value={assetType}
+                    disabled={!!urlType}
+                    onChange={(e) => setAssetType(e.target.value as AssetType)}
+                  >
                     {requestTypes.map((t) => <option key={t} value={t}>{ASSET_TYPE_LABEL[t]}</option>)}
                   </select>
                 </div>
@@ -198,7 +221,7 @@ const RepairCreate: React.FC = () => {
 
             <div className="space-y-1">
               <Label htmlFor="urgency">ความเร่งด่วน</Label>
-              <select id="urgency" className="h-10 w-full rounded-md border px-2 text-sm" value={urgency} onChange={(e) => setUrgency(e.target.value)}>
+              <select id="urgency" className="h-10 w-full rounded-md border bg-white px-2 text-sm" value={urgency} onChange={(e) => setUrgency(e.target.value)}>
                 <option value="LOW">ต่ำ</option>
                 <option value="NORMAL">ปกติ</option>
                 <option value="HIGH">สูง</option>
@@ -213,9 +236,10 @@ const RepairCreate: React.FC = () => {
               <Label htmlFor="description">อาการเสีย *</Label>
               <Textarea id="description" rows={4} value={description} onChange={(e) => setDescription(e.target.value)} />
             </div>
-            <p className="text-xs text-slate-500 md:col-span-2">
-              การแนบรูป/PDF จะเปิดใช้ในรอบถัดไป (ต้องเพิ่มไลบรารีย่อรูปฝั่ง backend)
-            </p>
+            <div className="space-y-1 md:col-span-2">
+              <Label>รูปอาการเสีย / เอกสาร</Label>
+              <AttachmentPicker files={files} onChange={setFiles} />
+            </div>
             <div className="flex gap-2 md:col-span-2">
               <Button type="submit" disabled={saving} className="bg-teal-700 hover:bg-teal-800">
                 {saving ? 'กำลังส่ง...' : 'ส่งใบแจ้งซ่อม'}

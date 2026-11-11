@@ -23,9 +23,9 @@ const PERMISSIONS = [
   ['repair.computer.tech', 'repair', 'ช่างคอมพิวเตอร์'],
   ['repair.medical.tech', 'repair', 'ช่างเครื่องมือแพทย์'],
   ['repair.general.tech', 'repair', 'ช่างทั่วไป'],
-  ['repair.lead', 'repair', 'หัวหน้าช่าง (รับแจ้งเตือนงานค้าง)'],
   ['repair.supply', 'repair', 'พัสดุ'],
   ['repair.approve', 'repair', 'ผู้อนุมัติ'],
+  ['repair.po.approve', 'repair', 'ผู้อนุมัติ PO'],
   ['repair.audit.view', 'repair', 'ดูประวัติการแก้ไข'],
   ['repair.all', 'repair', 'เห็นงานซ่อมทุกประเภท'],
   ['repair.settings', 'repair', 'ตั้งค่าระบบแจ้งซ่อม'],
@@ -34,8 +34,19 @@ const PERMISSIONS = [
 const ROLES = {
   admin: PERMISSIONS.map((p) => p[0]),
   staff: ['repair.login', 'repair.computer.request', 'repair.medical.request', 'repair.general.request'],
-  technician: ['repair.login', 'repair.computer.tech', 'repair.general.tech', 'repair.computer.request'],
+  technician: ['repair.login', 'repair.computer.tech', 'repair.general.tech', 'repair.medical.tech', 'repair.computer.request'],
+  supply: ['repair.login', 'repair.supply'],
+  tech2: ['repair.login', 'repair.computer.tech', 'repair.general.tech', 'repair.medical.tech'],
+  po_approver: ['repair.login', 'repair.po.approve'],
 };
+
+// ผู้ใช้ทดสอบเพิ่มเติม [username, password, firstname, lastname, role]
+const USERS = [
+  ['tech', 'tech123', 'กิตติ', 'ช่างไอที', 'technician'],
+  ['tech2', 'tech123', 'สมชาย', 'ช่างซ่อมบำรุง 2', 'tech2'],
+  ['supply', 'supply123', 'อรุณี', 'พัสดุ', 'supply'],
+  ['poapprover', 'po123', 'วันดี', 'ผู้อนุมัติ PO', 'po_approver'],
+];
 
 // [code, name, serial, equipment_type_id, custodian, location, price, purchase_date]
 const ASSETS = [
@@ -87,25 +98,31 @@ async function main() {
     );
   }
 
-  // ผู้ใช้ช่างตัวอย่าง
-  const tech = await client.query(`SELECT login_id FROM login WHERE username = 'tech'`);
-  if (tech.rows.length === 0) {
-    const dept = await client.query('SELECT department_id FROM departments ORDER BY department_id LIMIT 1');
-    const person = await client.query(
-      `INSERT INTO person (firstname, lastname, person_type, department_id) VALUES ('กิตติ', 'ช่างไอที', '2', $1) RETURNING person_id`,
-      [dept.rows[0]?.department_id ?? null]
-    );
-    const hash = await bcrypt.hash('tech123', 10);
-    const login = await client.query(
-      `INSERT INTO login (person_id, username, password, is_active) VALUES ($1, 'tech', $2, TRUE) RETURNING login_id`,
-      [person.rows[0].person_id, hash]
-    );
+  // ผู้ใช้ตัวอย่าง (ช่าง, พัสดุ)
+  for (const [username, password, firstname, lastname, role] of USERS) {
+    let loginId;
+    const existing = await client.query('SELECT login_id FROM login WHERE username = $1', [username]);
+    if (existing.rows.length > 0) {
+      loginId = existing.rows[0].login_id;
+    } else {
+      const dept = await client.query('SELECT department_id FROM departments ORDER BY department_id LIMIT 1');
+      const person = await client.query(
+        `INSERT INTO person (firstname, lastname, person_type, department_id) VALUES ($1, $2, '2', $3) RETURNING person_id`,
+        [firstname, lastname, dept.rows[0]?.department_id ?? null]
+      );
+      const hash = await bcrypt.hash(password, 10);
+      const login = await client.query(
+        `INSERT INTO login (person_id, username, password, is_active) VALUES ($1, $2, $3, TRUE) RETURNING login_id`,
+        [person.rows[0].person_id, username, hash]
+      );
+      loginId = login.rows[0].login_id;
+    }
     await client.query(
       `INSERT INTO user_roles (login_id, role_id)
-       SELECT $1, role_id FROM roles WHERE role_name = 'technician'
+       SELECT $1, role_id FROM roles WHERE role_name = $2
         AND NOT EXISTS (SELECT 1 FROM user_roles WHERE login_id = $1 AND role_id = roles.role_id)
        LIMIT 1`,
-      [login.rows[0].login_id]
+      [loginId, role]
     );
   }
 
@@ -124,7 +141,10 @@ async function main() {
   console.log('\nเสร็จสิ้น! บัญชีทดสอบ:');
   console.log('  admin / admin123  (ทุกสิทธิ์รวมตั้งค่าและดูประวัติการแก้ไข)');
   console.log('  staff / staff123  (แจ้งซ่อมได้)');
-  console.log('  tech  / tech123   (ช่างคอมพิวเตอร์ + ทั่วไป)');
+  console.log('  tech  / tech123   (ช่างทุกประเภท)');
+  console.log('  tech2 / tech123   (ช่างคอมพิวเตอร์ + ทั่วไป + เครื่องมือแพทย์ สำหรับทดสอบโอนงาน)');
+  console.log('  supply / supply123 (พัสดุ: รับเรื่องอะไหล่และส่งซ่อมภายนอก)');
+  console.log('  poapprover / po123 (ผู้อนุมัติ PO)');
 }
 
 main().catch((err) => {

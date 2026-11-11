@@ -8,7 +8,8 @@
     "start": "ts-node src/index.ts",
     "build": "tsc",
     "start:prod": "node dist/index.js",
-    "db:setup": "node scripts/setup-db.cjs"
+    "db:setup": "node scripts/setup-db.cjs",
+    "db:setup:repair": "node scripts/setup-repair-db.cjs"
   },
   "keywords": [],
   "author": "",
