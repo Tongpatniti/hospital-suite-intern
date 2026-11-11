@@ -1,0 +1,112 @@
+> turbo run dev --parallel
+
+ WARNING  --parallel is deprecated and will be removed in a future major version. Instead, define task behavior in your turbo.json task definitions using `persistent` and `with`.
+
+   • turbo 2.11.10
+   • Packages in scope: @repo/api-client, @repo/ui, backend, example-app, hub, repair-app
+   • Running dev in 6 packages
+   • Remote caching disabled
+
+repair-app:dev: cache bypass, force executing f4a714c22f62730a
+hub:dev: cache bypass, force executing e6ae10ef2351bbc2
+example-app:dev: cache bypass, force executing efde054bb72d2b8f
+backend:dev: cache bypass, force executing 86873bd547801238
+repair-app:dev:
+repair-app:dev: > repair-app@0.0.0 dev D:\test\hospital-suite-intern\apps\repair-app
+repair-app:dev: > vite
+repair-app:dev:
+hub:dev:
+hub:dev: > hub@0.0.0 dev D:\test\hospital-suite-intern\apps\hub
+hub:dev: > vite
+hub:dev:
+example-app:dev:
+example-app:dev: > example-app@0.0.0 dev D:\test\hospital-suite-intern\apps\example-app
+example-app:dev: > vite
+example-app:dev:
+backend:dev:
+backend:dev: > backend@1.0.0 dev D:\test\hospital-suite-intern\apps\backend
+backend:dev: > nodemon src/index.ts
+backend:dev:
+backend:dev: node:internal/modules/cjs/loader:1424
+backend:dev:   throw err;
+backend:dev:   ^
+backend:dev:
+backend:dev: Error: Cannot find module 'semver'
+backend:dev: Require stack:
+backend:dev: - D:\test\hospital-suite-intern\node_modules\.pnpm\nodemon@3.1.14\node_modules\nodemon\lib\utils\index.js
+backend:dev: - D:\test\hospital-suite-intern\node_modules\.pnpm\nodemon@3.1.14\node_modules\nodemon\lib\monitor\run.js
+backend:dev: - D:\test\hospital-suite-intern\node_modules\.pnpm\nodemon@3.1.14\node_modules\nodemon\lib\monitor\index.js
+backend:dev: - D:\test\hospital-suite-intern\node_modules\.pnpm\nodemon@3.1.14\node_modules\nodemon\lib\nodemon.js
+backend:dev: - D:\test\hospital-suite-intern\node_modules\.pnpm\nodemon@3.1.14\node_modules\nodemon\lib\index.js
+backend:dev: - D:\test\hospital-suite-intern\node_modules\.pnpm\nodemon@3.1.14\node_modules\nodemon\bin\nodemon.js
+backend:dev:     at Module._resolveFilename (node:internal/modules/cjs/loader:1421:15)
+backend:dev:     at defaultResolveImpl (node:internal/modules/cjs/loader:1059:19)
+backend:dev:     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1064:22)
+backend:dev:     at Module._load (node:internal/modules/cjs/loader:1227:37)
+backend:dev:     at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+backend:dev:     at wrapModuleLoad (node:internal/modules/cjs/loader:245:24)
+backend:dev:     at Module.require (node:internal/modules/cjs/loader:1504:12)
+backend:dev:     at require (node:internal/modules/helpers:152:16)
+backend:dev:     at Object.<anonymous> (D:\test\hospital-suite-intern\node_modules\.pnpm\nodemon@3.1.14\node_modules\nodemon\lib\utils\index.js:3:16)
+backend:dev:     at Module._compile (node:internal/modules/cjs/loader:1761:14) {
+backend:dev:   code: 'MODULE_NOT_FOUND',
+backend:dev:   requireStack: [
+backend:dev:     'D:\\test\\hospital-suite-intern\\node_modules\\.pnpm\\nodemon@3.1.14\\node_modules\\nodemon\\lib\\utils\\index.js',
+backend:dev:     'D:\\test\\hospital-suite-intern\\node_modules\\.pnpm\\nodemon@3.1.14\\node_modules\\nodemon\\lib\\monitor\\run.js',
+backend:dev:     'D:\\test\\hospital-suite-intern\\node_modules\\.pnpm\\nodemon@3.1.14\\node_modules\\nodemon\\lib\\monitor\\index.js',
+backend:dev:     'D:\\test\\hospital-suite-intern\\node_modules\\.pnpm\\nodemon@3.1.14\\node_modules\\nodemon\\lib\\nodemon.js',
+backend:dev:     'D:\\test\\hospital-suite-intern\\node_modules\\.pnpm\\nodemon@3.1.14\\node_modules\\nodemon\\lib\\index.js',
+backend:dev:     'D:\\test\\hospital-suite-intern\\node_modules\\.pnpm\\nodemon@3.1.14\\node_modules\\nodemon\\bin\\nodemon.js'
+backend:dev:   ]
+backend:dev: }
+backend:dev:
+backend:dev: Node.js v24.11.1
+repair-app:dev: node:internal/process/promises:394
+repair-app:dev:     triggerUncaughtException(err, true /* fromPromise */);
+repair-app:dev:     ^
+repair-app:dev:
+repair-app:dev: Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'picomatch' imported from D:\test\hospital-suite-intern\node_modules\.pnpm\tinyglobby@0.2.17\node_modules\tinyglobby\dist\index.mjs
+repair-app:dev: Did you mean to import "picomatch/index.js"?
+repair-app:dev:     at Object.getPackageJSONURL (node:internal/modules/package_json_reader:316:9)
+repair-app:dev:     at packageResolve (node:internal/modules/esm/resolve:768:81)
+repair-app:dev:     at moduleResolve (node:internal/modules/esm/resolve:858:18)
+repair-app:dev:     at defaultResolve (node:internal/modules/esm/resolve:990:11)
+repair-app:dev:     at #cachedDefaultResolve (node:internal/modules/esm/loader:737:20)
+repair-app:dev:     at ModuleLoader.resolve (node:internal/modules/esm/loader:714:38)
+repair-app:dev:     at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:293:38)
+repair-app:dev:     at #link (node:internal/modules/esm/module_job:208:49) {
+repair-app:dev:   code: 'ERR_MODULE_NOT_FOUND'
+repair-app:dev: }
+repair-app:dev:
+repair-app:dev: Node.js v24.11.1
+backend:dev:  ELIFECYCLE  Command failed with exit code 1.
+repair-app:dev:  ELIFECYCLE  Command failed with exit code 1.
+hub:dev: node:internal/process/promises:394
+hub:dev:     triggerUncaughtException(err, true /* fromPromise */);
+hub:dev:     ^
+hub:dev:
+hub:dev: Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'picomatch' imported from D:\test\hospital-suite-intern\node_modules\.pnpm\tinyglobby@0.2.17\node_modules\tinyglobby\dist\index.mjs
+hub:dev: Did you mean to import "picomatch/index.js"?
+hub:dev:     at Object.getPackageJSONURL (node:internal/modules/package_json_reader:316:9)
+hub:dev:     at packageResolve (node:internal/modules/esm/resolve:768:81)
+hub:dev:     at moduleResolve (node:internal/modules/esm/resolve:858:18)
+hub:dev:     at defaultResolve (node:internal/modules/esm/resolve:990:11)
+hub:dev:     at #cachedDefaultResolve (node:internal/modules/esm/loader:737:20)
+hub:dev:     at ModuleLoader.resolve (node:internal/modules/esm/loader:714:38)
+hub:dev:     at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:293:38)
+hub:dev:     at #link (node:internal/modules/esm/module_job:208:49) {
+hub:dev:   code: 'ERR_MODULE_NOT_FOUND'
+hub:dev: }
+hub:dev:
+hub:dev: Node.js v24.11.1
+hub:dev:  ELIFECYCLE  Command failed with exit code 1.
+repair-app#dev:  ERROR  command (D:\test\hospital-suite-intern\apps\repair-app) C:\Users\thanongsakt\AppData\Roaming\npm\pnpm.cmd run dev exited (1)
+backend#dev:  ERROR  command (D:\test\hospital-suite-intern\apps\backend) C:\Users\thanongsakt\AppData\Roaming\npm\pnpm.cmd run dev exited (1)
+
+ Tasks:    0 successful, 4 total
+Cached:    0 cached, 4 total
+  Time:    920ms
+Failed:    backend#dev, repair-app#dev
+
+ ERROR  run failed: command  exited (1)
+ ELIFECYCLE  Command failed with exit code 1.
