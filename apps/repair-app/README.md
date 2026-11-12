@@ -38,7 +38,7 @@ pnpm --filter repair-app dev          # http://localhost:5181/repair/
 | `/repairs/new` | แจ้งซ่อม + เตือนเมื่อเครื่องมีใบค้าง |
 | `/repairs/:id` | Timeline, เปลี่ยนสถานะ, ผู้ติดตาม, สถานะในทะเบียนครุภัณฑ์ |
 | `/assets/:id` | ประวัติการซ่อมรายเครื่อง |
-| `/audit` | ประวัติการแก้ไข (สิทธิ์ `repair.audit.view`) |
+| `/audit` | ประวัติการตั้งค่า (สิทธิ์ `repair.audit.view`) |
 | `/settings` | ค่าตั้งระบบและ SLA (แก้ได้เมื่อมี `repair.settings`) |
 
 ## Backend

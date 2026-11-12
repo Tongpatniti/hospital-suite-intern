@@ -56,7 +56,7 @@ const RepairSettings: React.FC = () => {
           warn_after_hours: Number(ruleDraft[r.sla_rule_id]), is_active: r.is_active, reason,
         });
       }
-      toast({ title: `บันทึก ${dirty} รายการแล้ว และเก็บในประวัติการแก้ไข` });
+      toast({ title: `บันทึก ${dirty} รายการแล้ว และเก็บในประวัติการตั้งค่า` });
       setReason('');
       load();
     } catch (err) {

@@ -51,7 +51,7 @@ const AuditLogs: React.FC = () => {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold text-slate-800">ประวัติการแก้ไข</h1>
+        <h1 className="text-2xl font-bold text-slate-800">ประวัติการตั้งค่า</h1>
         <p className="text-sm text-slate-500">บันทึกถาวรโดย trigger ในฐานข้อมูล แก้ไขหรือลบไม่ได้</p>
       </div>
       <Card><CardContent className="flex flex-wrap items-end gap-3 p-4">
