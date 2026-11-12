@@ -36,9 +36,9 @@ interface StatRow {
 
 const TYPE_FILTERS: { key: string; label: string }[] = [
   { key: '', label: 'ทุกประเภท' },
+  { key: 'GENERAL', label: 'ทั่วไป' },
   { key: 'COMPUTER', label: 'คอมพิวเตอร์' },
   { key: 'MEDICAL', label: 'เครื่องมือแพทย์' },
-  { key: 'GENERAL', label: 'ทั่วไป' },
 ];
 
 const FILTERS = [
@@ -107,6 +107,7 @@ const AssetHistory: React.FC = () => {
   const [filter, setFilter] = useState('all');
   const [assetType, setAssetType] = useState('');
   const [stats, setStats] = useState<StatRow[]>([]);
+  const [showStats, setShowStats] = useState(false);
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [list, setList] = useState<{ rows: TicketRow[]; total: number; totalPages: number }>({ rows: [], total: 0, totalPages: 1 });
@@ -132,14 +133,14 @@ const AssetHistory: React.FC = () => {
   }, [id, filter, assetType, q, page]);
 
   useEffect(() => {
-    if (id) return;
+    if (id || !showStats) return;
     const t = setTimeout(() => {
       api.get('/api/repair-asset-stats', { params: { asset_type: assetType } })
         .then((r) => setStats(r.data.data))
         .catch((err) => toast({ title: errorMessage(err, 'โหลดสถิติครุภัณฑ์ไม่สำเร็จ'), variant: 'destructive' }));
     }, 250);
     return () => clearTimeout(t);
-  }, [id, assetType]);
+  }, [id, assetType, showStats]);
 
   useEffect(() => {
     if (!id) return;
@@ -219,10 +220,17 @@ const AssetHistory: React.FC = () => {
       {!id && (
         <Card>
           <CardContent className="space-y-3 p-4">
-            <div>
-              <h2 className="font-semibold text-slate-800">สถิติการซ่อมรายครุภัณฑ์</h2>
-              <p className="text-xs text-slate-500">นับทุกใบซ่อมของเครื่อง รวมใบที่ยกเลิก เรียงจากซ่อมมากที่สุด</p>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h2 className="font-semibold text-slate-800">สถิติการซ่อมรายครุภัณฑ์</h2>
+                <p className="text-xs text-slate-500">นับทุกใบซ่อมของเครื่อง รวมใบที่ยกเลิก เรียงจากซ่อมมากที่สุด</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setShowStats((v) => !v)}>
+                {showStats ? 'ซ่อนสถิติ' : 'แสดงสถิติ'}
+              </Button>
             </div>
+            {!showStats && <p className="text-sm text-slate-400">กดปุ่ม "แสดงสถิติ" เพื่อโหลดข้อมูล</p>}
+            {showStats && (
             <div className="overflow-x-auto rounded-md border">
               <Table className="min-w-[860px]">
                 <TableHeader className="bg-slate-100">
@@ -259,6 +267,7 @@ const AssetHistory: React.FC = () => {
                 </TableBody>
               </Table>
             </div>
+            )}
           </CardContent>
         </Card>
       )}

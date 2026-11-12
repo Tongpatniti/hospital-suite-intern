@@ -41,7 +41,7 @@ const MainLayout: React.FC = () => {
 
   const utilityItems: NavItem[] = [
     { label: 'ประวัติการซ่อม', icon: <History size={20} />, path: '/assets' },
-    ...(hasPermission('repair.audit.view') ? [{ label: 'ประวัติการแก้ไข', icon: <ShieldCheck size={20} />, path: '/audit' }] : []),
+    ...(hasPermission('repair.audit.view') ? [{ label: 'ประวัติการตั้งค่า', icon: <ShieldCheck size={20} />, path: '/audit' }] : []),
     { label: 'ตั้งค่าระบบ', icon: <Settings size={20} />, path: '/settings' },
   ];
 

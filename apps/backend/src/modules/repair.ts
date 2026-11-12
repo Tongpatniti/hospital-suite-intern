@@ -734,7 +734,7 @@ export function repairRoutes(app: Express) {
   app.get('/api/repair-audit-logs', async (req: Request, res: Response) => {
     try {
       const u = await requireUser(req);
-      if (!can(u, 'repair.audit.view')) throw new HttpError(403, 'คุณไม่มีสิทธิ์ดูประวัติการแก้ไข');
+      if (!can(u, 'repair.audit.view')) throw new HttpError(403, 'คุณไม่มีสิทธิ์ดูประวัติการตั้งค่า');
       const params: unknown[] = [];
       const where: string[] = [];
       if (req.query.table) { params.push(String(req.query.table)); where.push(`l.table_name = $${params.length}`); }
@@ -750,7 +750,7 @@ export function repairRoutes(app: Express) {
       );
       res.json({ success: true, data: rows });
     } catch (err) {
-      sendError(res, err, 'โหลดประวัติการแก้ไขไม่สำเร็จ');
+      sendError(res, err, 'โหลดประวัติการตั้งค่าไม่สำเร็จ');
     }
   });
 

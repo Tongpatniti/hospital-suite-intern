@@ -49,7 +49,7 @@ const TYPES = Object.keys(ASSET_TYPE_LABEL) as AssetType[];
 
 const RepairList: React.FC = () => {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const { hasPermission } = useAuth();
   const type = (searchParams.get('type') || '') as '' | AssetType;
 
@@ -95,15 +95,6 @@ const RepairList: React.FC = () => {
   const [q, setQ] = useState('');
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
-
-  const setType = (value: string) => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      if (value) next.set('type', value);
-      else next.delete('type');
-      return next;
-    });
-  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -219,12 +210,11 @@ const RepairList: React.FC = () => {
           <div className="flex flex-wrap items-center gap-2">
             <select
               value={type}
-              onChange={(e) => setType(e.target.value)}
-              disabled={!!type}
-              className={cn('h-9 rounded-md border px-2 text-sm', type && 'cursor-not-allowed bg-slate-100 text-slate-500')}
+              disabled
+              className="h-9 cursor-not-allowed rounded-md border bg-slate-100 px-2 text-sm text-slate-500"
               aria-label="ประเภทงาน"
             >
-              <option value="">ทุกประเภทที่มีสิทธิ์</option>
+              <option value="">ทุกประเภท</option>
               {TYPES.map((k) => (
                 <option key={k} value={k}>{ASSET_TYPE_LABEL[k]}</option>
               ))}
