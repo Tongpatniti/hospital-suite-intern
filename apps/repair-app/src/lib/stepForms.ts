@@ -31,6 +31,7 @@ export interface ExternalForm {
   suggested_vendor: string;
   is_warranty: boolean;
   vendor_name: string;
+  quoted_price: string;
   sent_date: string;
   return_date: string;
   actual_cost: string;
@@ -44,6 +45,6 @@ export function todayLocal() {
 }
 
 export const emptyExternal = (): ExternalForm => ({
-  suggested_vendor: '', is_warranty: false, vendor_name: '',
+  suggested_vendor: '', is_warranty: false, vendor_name: '', quoted_price: '',
   sent_date: todayLocal(), return_date: todayLocal(), actual_cost: '', invoice_no: '',
 });

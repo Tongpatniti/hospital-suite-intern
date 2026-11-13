@@ -38,6 +38,7 @@ interface Row {
   assignee_name: string | null;
   hours_in_status: number;
   warn_after_hours: number | null;
+  work_days: number | null;
 }
 
 interface Tab { key: string; label: string; params: Record<string, string> }
@@ -73,14 +74,15 @@ const RepairList: React.FC = () => {
     if (hasPermission('repair.po.approve') && !isRequester && !isTech && !isSupply) {
       return [{ key: 'PO_PENDING', label: 'รออนุมัติ PO', params: { status: 'PO_PENDING' } }];
     }
-    const list: Tab[] = [];
+    const newTab: Tab = { key: 'NEW', label: 'รอช่างรับงาน', params: { status: 'NEW' } };
+    const list: Tab[] = isTech ? [newTab] : [];
     if (isRequester) list.push({ key: 'my_requests', label: 'แจ้งซ่อมของฉัน', params: { scope: 'my_requests', status: 'open' } });
     if (isTech) list.push({ key: 'my_tasks', label: 'งานที่ฉันรับผิดชอบ', params: { scope: 'my_tasks', status: 'open' } });
     if (isSupply) {
       list.push({ key: 'supply', label: 'งานพัสดุ', params: { status: SUPPLY_STATUSES.join(',') } });
       list.push({ key: 'handled', label: 'งานที่ฉันดำเนินการ', params: { scope: 'handled' } });
     }
-    list.push({ key: 'NEW', label: 'รอช่างรับงาน', params: { status: 'NEW' } });
+    if (!isTech) list.push(newTab);
     if (isRequester) list.push({ key: 'DONE', label: 'รอตรวจรับ', params: { status: 'DONE' } });
     if (isTech || isSupply) list.push({ key: 'open', label: 'งานที่ยังไม่ปิด', params: { status: 'open' } });
     list.push({ key: 'CLOSED', label: 'รายการที่เสร็จสิ้น', params: { status: 'CLOSED' } });
@@ -226,47 +228,49 @@ const RepairList: React.FC = () => {
           </div>
 
           <div className="overflow-x-auto rounded-md border">
-            <Table className="min-w-[900px]">
+            <Table className="min-w-[860px]">
               <TableHeader className="bg-slate-100">
                 <TableRow>
-                  <TableHead className="w-28"><button type="button" onClick={() => toggleSort('ticket_no')} className="font-semibold hover:text-teal-800">เลขใบซ่อม{sortIcon('ticket_no')}</button></TableHead>
-                  <TableHead>ครุภัณฑ์ / อาการ</TableHead>
-                  <TableHead className="w-40">ประเภท</TableHead>
-                  <TableHead className="w-40"><button type="button" onClick={() => toggleSort('status')} className="font-semibold hover:text-teal-800">สถานะ{sortIcon('status')}</button></TableHead>
-                  <TableHead className="w-56"><button type="button" onClick={() => toggleSort('sla')} className="font-semibold hover:text-teal-800">SLA{sortIcon('sla')}</button></TableHead>
-                  <TableHead className="w-36">ช่าง</TableHead>
-                  <TableHead className="w-36"><button type="button" onClick={() => toggleSort('created_date')} className="font-semibold hover:text-teal-800">แจ้งเมื่อ{sortIcon('created_date')}</button></TableHead>
+                  <TableHead className="w-28 whitespace-nowrap"><button type="button" onClick={() => toggleSort('ticket_no')} className="font-semibold hover:text-teal-800">เลขใบซ่อม{sortIcon('ticket_no')}</button></TableHead>
+                  <TableHead className="whitespace-nowrap">ครุภัณฑ์ / อาการ</TableHead>
+                  <TableHead className="w-24 whitespace-nowrap">ประเภท</TableHead>
+                  <TableHead className="whitespace-nowrap"><button type="button" onClick={() => toggleSort('status')} className="font-semibold hover:text-teal-800">สถานะ{sortIcon('status')}</button></TableHead>
+                  <TableHead className="whitespace-nowrap"><button type="button" onClick={() => toggleSort('sla')} className="font-semibold hover:text-teal-800">SLA{sortIcon('sla')}</button></TableHead>
+                  <TableHead className="whitespace-nowrap">ช่าง</TableHead>
+                  <TableHead className="w-24 whitespace-nowrap text-center">ระยะเวลา (วัน)</TableHead>
+                  <TableHead className="whitespace-nowrap"><button type="button" onClick={() => toggleSort('created_date')} className="font-semibold hover:text-teal-800">แจ้งเมื่อ{sortIcon('created_date')}</button></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading && rows.length === 0 && (
-                  <TableRow><TableCell colSpan={7} className="py-8 text-center text-slate-400">กำลังโหลด...</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="py-8 text-center text-slate-400">กำลังโหลด...</TableCell></TableRow>
                 )}
                 {!loading && rows.length === 0 && (
-                  <TableRow><TableCell colSpan={7} className="py-8 text-center text-slate-400">ไม่พบใบซ่อม</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="py-8 text-center text-slate-400">ไม่พบใบซ่อม</TableCell></TableRow>
                 )}
                 {sortedRows.map((r) => (
                   <TableRow key={r.ticket_id} className="cursor-pointer hover:bg-slate-50" onClick={() => navigate(`/repairs/${r.ticket_id}`)}>
-                    <TableCell className="font-mono text-xs">{r.ticket_no}</TableCell>
-                    <TableCell>
-                      <div className="font-medium">{r.title}</div>
-                      <div className="font-mono text-xs text-slate-500">
-                        {r.asset_code_snapshot || 'ไม่มีรหัสครุภัณฑ์'}
-                        {r.asset_department_snapshot && ` · ${r.asset_department_snapshot}`}
-                        {r.urgency !== 'NORMAL' && ` · ด่วน: ${URGENCY_LABEL[r.urgency]}`}
+                    <TableCell className="whitespace-nowrap font-mono text-xs align-middle">{r.ticket_no}</TableCell>
+                    <TableCell className="min-w-[18rem] align-middle">
+                      <div className="max-w-[26rem] truncate font-medium" title={r.title}>{r.title}</div>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-1 font-mono text-xs text-slate-500">
+                        <span className="whitespace-nowrap">{r.asset_code_snapshot || 'ไม่มีรหัสครุภัณฑ์'}</span>
+                        {r.asset_department_snapshot && <span className="truncate">· {r.asset_department_snapshot}</span>}
+                        {r.urgency !== 'NORMAL' && <span className="whitespace-nowrap">· ด่วน: {URGENCY_LABEL[r.urgency]}</span>}
                       </div>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="whitespace-nowrap align-middle">
                       <div>{ASSET_TYPE_LABEL[r.asset_type]}</div>
                     </TableCell>
-                    <TableCell><StatusPill status={r.status} warranty={r.is_warranty} /></TableCell>
-                    <TableCell>
+                    <TableCell className="align-middle"><StatusPill status={r.status} warranty={r.is_warranty} /></TableCell>
+                    <TableCell className="whitespace-nowrap align-middle">
                       {['CLOSED', 'CANCELLED'].includes(r.status)
                         ? <span className="text-xs text-slate-400">–</span>
                         : <SlaBadge hours={r.hours_in_status} warn={r.warn_after_hours} />}
                     </TableCell>
-                    <TableCell className="text-sm">{r.assignee_name || '–'}</TableCell>
-                    <TableCell className="text-xs text-slate-500">{fmtDateTimeTH(r.created_date)}</TableCell>
+                    <TableCell className="max-w-[11rem] truncate align-middle text-sm" title={r.assignee_name || undefined}>{r.assignee_name || '–'}</TableCell>
+                    <TableCell className="text-center tabular-nums align-middle text-sm">{r.work_days ?? '–'}</TableCell>
+                    <TableCell className="whitespace-nowrap align-middle text-xs text-slate-500">{fmtDateTimeTH(r.created_date)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

@@ -96,6 +96,8 @@ interface Ticket {
   requester_id: number;
   close_result: string | null;
   parts: Part[];
+  brand: string | null;
+  expected_days: number | null;
   externals: External[];
   purchase_orders: PurchaseOrder[];
   co_technicians: { person_id: number; person_name: string; added_at: string }[];
@@ -104,7 +106,7 @@ interface Ticket {
 
 interface TechOption { person_id: number; name: string }
 
-type ActionKind = 'confirm' | 'cancel' | 'done' | 'close' | 'sendBack' | 'parts' | 'po' | 'reject' | 'extRequest' | 'extSend' | 'extReceive';
+type ActionKind = 'confirm' | 'cancel' | 'done' | 'close' | 'sendBack' | 'parts' | 'po' | 'reject' | 'extRequest' | 'extPrice' | 'extSend' | 'extReceive' | 'start';
 
 // ขั้นไหนต้องกรอกอะไรเพิ่ม — ที่เหลือมีแค่ปุ่มยืนยัน/ยกเลิก
 function actionKind(from: string, to: string): ActionKind {
@@ -116,6 +118,10 @@ function actionKind(from: string, to: string): ActionKind {
   if (to === 'PO_PENDING') return 'po';
   if (to === 'PART_APPROVAL' && from === 'PO_PENDING') return 'reject';
   if (to === 'WAIT_EXTERNAL') return 'extRequest';
+  if (to === 'EXT_PRICE_PENDING') return 'extPrice';
+  if (to === 'EXT_APPROVAL' && from === 'EXT_PRICE_PENDING') return 'reject';
+  if (to === 'UNREPAIRABLE_CHECK') return 'extReceive';
+  if (to === 'IN_PROGRESS' && from === 'ACCEPTED') return 'start';
   if (to === 'EXT_SENT') return 'extSend';
   if (to === 'EXT_RECEIVED') return 'extReceive';
   return 'confirm';
@@ -133,7 +139,13 @@ function actionLabel(from: string, to: string, fallback: string, isRequesterSide
   if (to === 'PART_APPROVAL' && from === 'PO_PENDING') return 'ไม่อนุมัติ PO';
   if (to === 'PART_PURCHASING') return 'เริ่มจัดซื้ออะไหล่';
   if (to === 'PART_ARRIVED') return 'อะไหล่ถึงคลังแล้ว';
+  if (to === 'EXT_APPROVAL' && from === 'EXT_PRICE_PENDING') return 'ไม่อนุมัติราคา ส่งกลับให้พัสดุ';
   if (to === 'EXT_APPROVAL') return 'พัสดุรับเรื่องส่งซ่อม';
+  if (to === 'EXT_PRICE_PENDING') return 'ส่งขออนุมัติราคาซ่อมภายนอก';
+  if (to === 'EXT_PRICE_APPROVED') return 'อนุมัติราคาซ่อมภายนอก';
+  if (to === 'UNREPAIRABLE_CHECK') return 'รับคืน: ซ่อมไม่ได้/ไม่คุ้ม ส่งช่างตรวจซ้ำ';
+  if (to === 'DISPOSAL') return 'ช่างตรวจซ้ำแล้ว ส่งรอจำหน่าย';
+  if (to === 'IN_PROGRESS' && from === 'UNREPAIRABLE_CHECK') return 'ช่างตรวจซ้ำแล้ว ซ่อมต่อได้';
   if (to === 'EXT_SENT') return 'ส่งร้านภายนอกแล้ว';
   if (to === 'EXT_RECEIVED') return 'รับอุปกรณ์คืนแล้ว';
   if (to === 'IN_PROGRESS' && from === 'PART_ARRIVED') return 'รับอะไหล่แล้ว ซ่อมต่อ';
@@ -159,6 +171,7 @@ const RepairDetail: React.FC = () => {
   const [t, setT] = useState<Ticket | null>(null);
   const [action, setAction] = useState<{ code: string; label: string } | null>(null);
   const [remark, setRemark] = useState('');
+  const [expectedDays, setExpectedDays] = useState('');
   const [score, setScore] = useState(5);
   const [closeResult, setCloseResult] = useState('REPAIRED');
   const [poNo, setPoNo] = useState('');
@@ -173,6 +186,10 @@ const RepairDetail: React.FC = () => {
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferTo, setTransferTo] = useState('');
   const [transferReason, setTransferReason] = useState('');
+  const [assetChangeOpen, setAssetChangeOpen] = useState(false);
+  const [assetChangeTo, setAssetChangeTo] = useState('');
+  const [assetChangeReason, setAssetChangeReason] = useState('');
+  const [assetOptions, setAssetOptions] = useState<{ asset_id: number; asset_code: string; name: string; asset_type: AssetType }[]>([]);
   const [coTechPick, setCoTechPick] = useState('');
   const [progressNote, setProgressNote] = useState('');
   const { user, hasPermission } = useAuth();
@@ -215,6 +232,7 @@ const RepairDetail: React.FC = () => {
     setStepFiles([]);
     setPartRows([emptyPart()]);
     setExtForm(emptyExternal());
+    setExpectedDays('');
   };
 
   const submitAction = async () => {
@@ -250,15 +268,17 @@ const RepairDetail: React.FC = () => {
         score: action.code === 'CLOSED' ? score : undefined,
         comment: action.code === 'CLOSED' ? remark : undefined,
         close_result: action.code === 'DONE' ? closeResult : undefined,
+        expected_days: action.code === 'IN_PROGRESS' ? Number(expectedDays) : undefined,
         attachment_ids: uploadedIds,
         parts,
         po: action.code === 'PO_PENDING' ? { po_no: poNo.trim(), po_date: poDate || null } : undefined,
-        external: ['WAIT_EXTERNAL', 'EXT_SENT', 'EXT_RECEIVED'].includes(action.code)
+        external: ['WAIT_EXTERNAL', 'EXT_PRICE_PENDING', 'EXT_SENT', 'EXT_RECEIVED', 'UNREPAIRABLE_CHECK'].includes(action.code)
           ? {
               ...extForm,
               sent_date: extForm.sent_date || null,
               return_date: extForm.return_date || null,
               actual_cost: extForm.actual_cost === '' ? null : Number(extForm.actual_cost),
+              quoted_price: extForm.quoted_price === '' ? null : Number(extForm.quoted_price),
             }
           : undefined,
       });
@@ -306,6 +326,26 @@ const RepairDetail: React.FC = () => {
     }
   };
 
+  const openAssetChange = () => {
+    setAssetChangeTo('');
+    setAssetChangeReason('');
+    setAssetChangeOpen(true);
+    api.get('/api/repair-assets', { params: { q: '' } })
+      .then((res) => setAssetOptions(res.data.data))
+      .catch(() => setAssetOptions([]));
+  };
+
+  const submitAssetChange = async () => {
+    if (!t) return;
+    await runTeamAction(async () => {
+      await api.patch(`/api/repairs/${t.ticket_id}/asset`, {
+        asset_id: assetChangeTo === '' ? null : Number(assetChangeTo),
+        reason: assetChangeReason.trim(),
+      });
+      setAssetChangeOpen(false);
+    }, 'เปลี่ยนประเภทครุภัณฑ์แล้ว');
+  };
+
   const submitTransfer = async () => {
     if (!t) return;
     await runTeamAction(async () => {
@@ -338,18 +378,21 @@ const RepairDetail: React.FC = () => {
   ].sort((x, y) => new Date(y.at).getTime() - new Date(x.at).getTime());
 
   const kind: ActionKind = action ? actionKind(t.status, action.code) : 'confirm';
-  const needRemark = kind === 'cancel' || kind === 'done' || kind === 'sendBack' || kind === 'extRequest' || kind === 'reject';
+  const needRemark = kind === 'cancel' || kind === 'done' || kind === 'sendBack' || kind === 'extRequest' || kind === 'reject'
+    || action?.code === 'UNREPAIRABLE_CHECK' || action?.code === 'DISPOSAL';
   const canSubmit = !saving
     && (!needRemark || remark.trim() !== '')
     && (kind !== 'parts' || partsReady(partRows))
     && (kind !== 'po' || poNo.trim() !== '')
-    && (kind !== 'extSend' || (extForm.vendor_name.trim() !== '' && extForm.sent_date !== ''))
-    && (kind !== 'extReceive' || (extForm.return_date !== '' && extForm.actual_cost.trim() !== ''));
+    && (kind !== 'extSend' || extForm.sent_date !== '')
+    && (kind !== 'extPrice' || (extForm.vendor_name.trim() !== '' && extForm.quoted_price.trim() !== ''))
+    && (kind !== 'start' || Number(expectedDays) >= 1)
+    && (kind !== 'extReceive' || (extForm.return_date !== '' && (action?.code === 'UNREPAIRABLE_CHECK' || extForm.actual_cost.trim() !== '')));
   const showFiles = kind === 'done' || kind === 'extRequest' || kind === 'po';
   const isTechSide = hasPermission(`repair.${t.asset_type.toLowerCase()}.tech`) || isAdminUser;
   const isRequesterSide = t.requester_id === myId && !isTechSide;
   const label = (code: string, fallback: string) => actionLabel(t.status, code, fallback, isRequesterSide);
-  const isOpen = !['CLOSED', 'CANCELLED'].includes(t.status);
+  const isOpen = !['CLOSED', 'CANCELLED', 'DISPOSAL'].includes(t.status);
   const stepFilesOf = (historyId: number) =>
     t.attachments.filter((a) => a.reference_type === 'STATUS' && a.reference_id === historyId);
   const ticketFiles = t.attachments.filter((a) => a.reference_type !== 'STATUS' && a.reference_type !== 'PART');
@@ -372,6 +415,9 @@ const RepairDetail: React.FC = () => {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={toggleWatch}>{t.is_watching ? 'เลิกติดตาม' : 'ติดตามใบนี้'}</Button>
+          {isAssignee && ['ACCEPTED', 'IN_PROGRESS'].includes(t.status) && (
+            <Button variant="outline" onClick={openAssetChange}>เปลี่ยนประเภทครุภัณฑ์</Button>
+          )}
           {canManageTeam && (
             <Button variant="outline" onClick={() => { setTransferTo(''); setTransferReason(''); setTransferOpen(true); }}>
               โอนงานให้ช่างคนอื่น
@@ -568,6 +614,8 @@ const RepairDetail: React.FC = () => {
                 <dt className="text-slate-500">แผนก</dt><dd>{t.asset_department_snapshot || '-'}</dd>
                 <dt className="text-slate-500">ผู้ดูแล</dt><dd>{t.custodian_name_snapshot || '-'}</dd>
                 <dt className="text-slate-500">สถานที่</dt><dd>{t.location_snapshot || '-'}</dd>
+                <dt className="text-slate-500">ยี่ห้อ</dt><dd>{t.brand || '-'}</dd>
+                <dt className="text-slate-500">ระยะเวลาที่คาดไว้</dt><dd>{t.expected_days ? `${t.expected_days} วัน` : '-'}</dd>
                 <dt className="text-slate-500">ผู้แจ้ง</dt><dd>{t.requester_name}</dd>
                 <dt className="text-slate-500">ช่างผู้รับผิดชอบ</dt><dd>{t.assignee_name || '-'}</dd>
                 <dt className="text-slate-500">ผู้ซ่อมเสร็จ</dt><dd>{t.done_by_name || '-'}</dd>
@@ -652,6 +700,34 @@ const RepairDetail: React.FC = () => {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={assetChangeOpen} onOpenChange={(o) => !o && setAssetChangeOpen(false)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader><DialogTitle>เปลี่ยนประเภทครุภัณฑ์</DialogTitle></DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-slate-600">
+              เลือกครุภัณฑ์ที่มีรหัสประเภท{ASSET_TYPE_LABEL[t.asset_type]} หรือเลือก "ไม่มีรหัสครุภัณฑ์" ระบบจะคืนสถานะทะเบียนของเครื่องเดิมให้
+            </p>
+            <div className="space-y-1">
+              <Label htmlFor="assetChangeTo">ครุภัณฑ์</Label>
+              <select id="assetChangeTo" className="h-10 w-full rounded-md border px-2 text-sm" value={assetChangeTo} onChange={(e) => setAssetChangeTo(e.target.value)}>
+                <option value="">ไม่มีรหัสครุภัณฑ์</option>
+                {assetOptions.filter((a) => a.asset_type === t.asset_type).map((a) => (
+                  <option key={a.asset_id} value={a.asset_id}>{a.asset_code} · {a.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="assetChangeReason">เหตุผลที่เปลี่ยน *</Label>
+              <Textarea id="assetChangeReason" rows={3} value={assetChangeReason} onChange={(e) => setAssetChangeReason(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssetChangeOpen(false)}>ยกเลิก</Button>
+            <Button onClick={submitAssetChange} disabled={!assetChangeReason.trim()} className="bg-teal-700 hover:bg-teal-800">ยืนยัน</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!action} onOpenChange={(o) => !o && setAction(null)}>
         <DialogContent className={kind === 'parts' ? 'sm:max-w-3xl' : 'sm:max-w-lg'}>
           <DialogHeader><DialogTitle>{kind === 'confirm' ? 'ยืนยันเปลี่ยนสถานะ' : action?.label}</DialogTitle></DialogHeader>
@@ -696,17 +772,27 @@ const RepairDetail: React.FC = () => {
               </div>
             )}
             {kind === 'extRequest' && <ExternalFields step="request" form={extForm} onChange={setExtForm} />}
+            {kind === 'extPrice' && <ExternalFields step="price" form={extForm} onChange={setExtForm} />}
+            {kind === 'start' && (
+              <div className="space-y-1">
+                <Label htmlFor="expectedDays">ระยะเวลาที่คาดไว้ในการซ่อม (จำนวนวัน) *</Label>
+                <Input id="expectedDays" type="number" min="1" step="1" value={expectedDays} onChange={(e) => setExpectedDays(e.target.value)} />
+              </div>
+            )}
             {kind === 'extSend' && <ExternalFields step="send" form={extForm} onChange={setExtForm} />}
             {kind === 'extReceive' && <ExternalFields step="receive" form={extForm} onChange={setExtForm} />}
-            {kind !== 'confirm' && (
+            {(kind !== 'confirm' || action?.code === 'DISPOSAL') && (
               <div className="space-y-1">
                 <Label htmlFor="remark">
                   {kind === 'cancel' ? 'เหตุผลที่ยกเลิก (บังคับ)'
                     : kind === 'done' ? 'สิ่งที่ซ่อม / ผลการซ่อม (บังคับ)'
                     : kind === 'sendBack' ? 'เหตุผลที่ส่งกลับซ่อม (บังคับ)'
                     : kind === 'extRequest' ? 'อาการ / เหตุผลที่ต้องส่งซ่อมภายนอก (บังคับ)'
+                    : action?.code === 'UNREPAIRABLE_CHECK' ? 'เหตุผลที่ซ่อมไม่ได้หรือไม่คุ้ม (บังคับ)'
+                    : action?.code === 'DISPOSAL' ? 'เหตุผลที่ส่งรอจำหน่าย (บังคับ)'
+                    : kind === 'reject' && t.status === 'EXT_PRICE_PENDING' ? 'เหตุผลที่ไม่อนุมัติราคา (บังคับ)'
                     : kind === 'reject' ? 'เหตุผลที่ไม่อนุมัติ PO (บังคับ)'
-                    : kind === 'close' ? 'ความเห็นเพิ่มเติม'
+                    : kind === 'close' ? 'ข้อเสนอแนะ'
                     : 'หมายเหตุ'}
                 </Label>
                 <Textarea id="remark" rows={kind === 'parts' ? 2 : 3} value={remark} onChange={(e) => setRemark(e.target.value)} />

@@ -15,7 +15,7 @@ import { StatusPill } from '../components/RepairBadges';
 
 interface AssetRow { asset_id: number; asset_code: string; name: string; department_name: string | null; asset_type: AssetType }
 
-interface TicketRow {
+export interface TicketRow {
   ticket_id: number; ticket_no: string; asset_type?: AssetType; asset_id?: number | null; asset_code_snapshot?: string | null;
   title: string; description: string | null; asset_department_snapshot?: string | null; status: string;
   close_result: string | null; created_date: string; assignee_name: string | null; score: number | null; total_cost: number | null;
@@ -47,20 +47,20 @@ const FILTERS = [
   { key: 'no', label: 'ไม่มีรหัสครุภัณฑ์' },
 ];
 
-function TicketTable({ rows, showAsset }: { rows: TicketRow[]; showAsset?: boolean }) {
+export function TicketTable({ rows, showAsset }: { rows: TicketRow[]; showAsset?: boolean }) {
   return (
     <div className="overflow-x-auto">
-      <Table className="min-w-[900px]">
+      <Table className="min-w-[960px]">
         <TableHeader className="bg-slate-100">
           <TableRow>
-            <TableHead className="w-28">เลขใบซ่อม</TableHead>
-            <TableHead className="w-36">วันที่แจ้ง</TableHead>
-            {showAsset && <TableHead className="w-56">ครุภัณฑ์ / สิ่งของ</TableHead>}
-            <TableHead>อาการ</TableHead>
-            <TableHead className="w-36">สถานะ</TableHead>
-            <TableHead className="w-32">ผล</TableHead>
-            <TableHead className="w-28 text-right">ค่าใช้จ่าย</TableHead>
-            <TableHead className="w-20">คะแนน</TableHead>
+            <TableHead className="w-28 whitespace-nowrap">เลขใบซ่อม</TableHead>
+            <TableHead className="w-32 whitespace-nowrap">วันที่แจ้ง</TableHead>
+            {showAsset && <TableHead className="whitespace-nowrap">ครุภัณฑ์ / สิ่งของ</TableHead>}
+            <TableHead className="whitespace-nowrap">อาการ</TableHead>
+            <TableHead className="whitespace-nowrap">สถานะ</TableHead>
+            <TableHead className="whitespace-nowrap">ผล</TableHead>
+            <TableHead className="whitespace-nowrap text-right">ค่าใช้จ่าย</TableHead>
+            <TableHead className="w-20 whitespace-nowrap text-center">คะแนน</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -69,24 +69,26 @@ function TicketTable({ rows, showAsset }: { rows: TicketRow[]; showAsset?: boole
           )}
           {rows.map((t) => (
             <TableRow key={t.ticket_id}>
-              <TableCell className="font-mono text-xs"><Link to={`/repairs/${t.ticket_id}`} className="text-teal-700 hover:underline">{t.ticket_no}</Link></TableCell>
-              <TableCell className="text-xs">{fmtDateTimeTH(t.created_date)}</TableCell>
+              <TableCell className="whitespace-nowrap font-mono text-xs align-middle"><Link to={`/repairs/${t.ticket_id}`} className="text-teal-700 hover:underline">{t.ticket_no}</Link></TableCell>
+              <TableCell className="whitespace-nowrap align-middle text-xs text-slate-500">{fmtDateTimeTH(t.created_date)}</TableCell>
               {showAsset && (
-                <TableCell>
-                  <div className="font-medium">{t.title}</div>
-                  <div className="text-xs text-slate-500">
+                <TableCell className="min-w-[16rem] align-middle">
+                  <div className="max-w-[24rem] truncate font-medium" title={t.title}>{t.title}</div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1 text-xs text-slate-500">
                     {t.asset_id
-                      ? <Link to={`/assets/${t.asset_id}`} className="font-mono text-teal-700 hover:underline">{t.asset_code_snapshot}</Link>
-                      : <span className="rounded bg-slate-100 px-1.5">ไม่มีรหัสครุภัณฑ์</span>}
-                    {t.asset_department_snapshot && ` · ${t.asset_department_snapshot}`}
+                      ? <Link to={`/assets/${t.asset_id}`} className="whitespace-nowrap font-mono text-teal-700 hover:underline">{t.asset_code_snapshot}</Link>
+                      : <span className="whitespace-nowrap rounded bg-slate-100 px-1.5">ไม่มีรหัสครุภัณฑ์</span>}
+                    {t.asset_department_snapshot && <span className="truncate">· {t.asset_department_snapshot}</span>}
                   </div>
                 </TableCell>
               )}
-              <TableCell className="text-sm">{t.description || (showAsset ? '–' : t.title)}</TableCell>
-              <TableCell><StatusPill status={t.status} /></TableCell>
-              <TableCell className="text-sm">{t.close_result ? CLOSE_RESULT_LABEL[t.close_result] : '–'}</TableCell>
-              <TableCell className="text-right tabular-nums text-sm">{t.total_cost ? fmtMoney(t.total_cost) : '–'}</TableCell>
-              <TableCell className="text-amber-500">{t.score ? '★'.repeat(t.score) : '–'}</TableCell>
+              <TableCell className="max-w-[22rem] truncate align-middle text-sm" title={t.description || (showAsset ? undefined : t.title)}>
+                {t.description || (showAsset ? '–' : t.title)}
+              </TableCell>
+              <TableCell className="align-middle"><StatusPill status={t.status} /></TableCell>
+              <TableCell className="whitespace-nowrap align-middle text-sm">{t.close_result ? CLOSE_RESULT_LABEL[t.close_result] : '–'}</TableCell>
+              <TableCell className="whitespace-nowrap text-right tabular-nums align-middle text-sm">{t.total_cost ? fmtMoney(t.total_cost) : '–'}</TableCell>
+              <TableCell className="whitespace-nowrap text-center text-amber-500 align-middle">{t.score ? '★'.repeat(t.score) : '–'}</TableCell>
             </TableRow>
           ))}
         </TableBody>

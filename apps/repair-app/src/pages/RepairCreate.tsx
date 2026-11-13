@@ -49,6 +49,7 @@ const RepairCreate: React.FC = () => {
   const [description, setDescription] = useState('');
   const [urgency, setUrgency] = useState('NORMAL');
   const [location, setLocation] = useState('');
+  const [brand, setBrand] = useState('');
   const [openTickets, setOpenTickets] = useState<OpenTicket[]>([]);
   const [dupMode, setDupMode] = useState<'none' | 'new'>('none');
   const [dupReason, setDupReason] = useState('');
@@ -99,6 +100,7 @@ const RepairCreate: React.FC = () => {
     e.preventDefault();
     if (!noAsset && !assetId) return toast({ title: 'กรุณาเลือกครุภัณฑ์ หรือเลือก "ไม่มีรหัสครุภัณฑ์"', variant: 'destructive' });
     if (noAsset && !title.trim()) return toast({ title: 'กรุณาระบุชื่อสิ่งของที่แจ้งซ่อม', variant: 'destructive' });
+    if (!brand.trim()) return toast({ title: 'กรุณาระบุยี่ห้อ', variant: 'destructive' });
     if (!description.trim()) return toast({ title: 'กรุณาระบุอาการเสีย', variant: 'destructive' });
     if (openTickets.length > 0 && (dupMode !== 'new' || !dupReason.trim())) {
       return toast({ title: 'เครื่องนี้มีใบซ่อมค้างอยู่ กรุณาติดตามใบเดิม หรือกรอกเหตุผลที่แจ้งใหม่', variant: 'destructive' });
@@ -112,6 +114,7 @@ const RepairCreate: React.FC = () => {
         description,
         urgency,
         location,
+        brand,
         duplicate_of_ticket_id: openTickets.length > 0 ? openTickets[0].ticket_id : undefined,
         duplicate_reason: openTickets.length > 0 ? dupReason : undefined,
       });
@@ -231,6 +234,10 @@ const RepairCreate: React.FC = () => {
             <div className="space-y-1">
               <Label htmlFor="location">สถานที่ตั้ง</Label>
               <Input id="location" value={location} onChange={(e) => setLocation(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="brand">ยี่ห้อ *</Label>
+              <Input id="brand" value={brand} onChange={(e) => setBrand(e.target.value)} />
             </div>
             <div className="space-y-1 md:col-span-2">
               <Label htmlFor="description">อาการเสีย *</Label>

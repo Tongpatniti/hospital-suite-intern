@@ -16,7 +16,7 @@ import { HttpError, can, getCurrentUser, getSetting, mtpPool, sendError } from '
 // ส่งทีละ 1 ไฟล์ต่อ request (base64 ใน JSON) เพื่อไม่ต้องเพิ่มไลบรารี multipart
 // ===========================================================================
 
-export const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || path.resolve(__dirname, '..', '..', 'uploads', 'repair'));
+export const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || path.resolve(__dirname, '..', 'uploads', 'repair'));
 
 type Kind = { kind: 'IMAGE' | 'PDF'; mime: string; ext: string };
 
