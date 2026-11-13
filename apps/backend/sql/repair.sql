@@ -563,17 +563,28 @@ INSERT INTO repair_sla_rules (status, urgency, warn_after_hours, notify_requeste
   ('PO_APPROVED', NULL, 24, FALSE, TRUE, TRUE)
 ON CONFLICT DO NOTHING;
 
+-- ยี่ห้อ / ระยะเวลาที่คาดไว้ (วัน) / ราคาซ่อมภายนอกและการอนุมัติราคา
+ALTER TABLE repair_tickets ADD COLUMN IF NOT EXISTS brand VARCHAR(100);
+ALTER TABLE repair_tickets ADD COLUMN IF NOT EXISTS expected_days INTEGER CHECK (expected_days > 0);
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS quoted_price NUMERIC(12, 2);
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS price_decided_by INTEGER REFERENCES person(person_id);
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS price_decided_at TIMESTAMPTZ;
+ALTER TABLE repair_externals ADD COLUMN IF NOT EXISTS price_decision_remark TEXT;
+
 -- CHECK ของสถานะใบซ่อม: ฐานข้อมูลเดิมอาจมี constraint รุ่นก่อนที่ไม่รู้จักสถานะ PO จึงต้องสร้างใหม่ให้ครบ
 ALTER TABLE repair_tickets DROP CONSTRAINT IF EXISTS repair_tickets_status_check;
 ALTER TABLE repair_tickets ADD CONSTRAINT repair_tickets_status_check CHECK (status IN (
   'NEW', 'ACCEPTED', 'IN_PROGRESS', 'WAIT_PART', 'PART_APPROVAL', 'PO_PENDING', 'PO_APPROVED', 'PART_PURCHASING',
-  'PART_ARRIVED', 'WAIT_EXTERNAL', 'EXT_APPROVAL', 'EXT_SENT', 'EXT_RECEIVED', 'DONE', 'CLOSED', 'CANCELLED'));
+  'PART_ARRIVED', 'WAIT_EXTERNAL', 'EXT_APPROVAL', 'EXT_PRICE_PENDING', 'EXT_PRICE_APPROVED', 'EXT_SENT',
+  'EXT_RECEIVED', 'UNREPAIRABLE_CHECK', 'DISPOSAL', 'DONE', 'CLOSED', 'CANCELLED'));
 ALTER TABLE repair_status_history DROP CONSTRAINT IF EXISTS repair_status_history_from_status_check;
 ALTER TABLE repair_status_history ADD CONSTRAINT repair_status_history_from_status_check CHECK (from_status IS NULL OR from_status IN (
   'NEW', 'ACCEPTED', 'IN_PROGRESS', 'WAIT_PART', 'PART_APPROVAL', 'PO_PENDING', 'PO_APPROVED', 'PART_PURCHASING',
-  'PART_ARRIVED', 'WAIT_EXTERNAL', 'EXT_APPROVAL', 'EXT_SENT', 'EXT_RECEIVED', 'DONE', 'CLOSED', 'CANCELLED'));
+  'PART_ARRIVED', 'WAIT_EXTERNAL', 'EXT_APPROVAL', 'EXT_PRICE_PENDING', 'EXT_PRICE_APPROVED', 'EXT_SENT',
+  'EXT_RECEIVED', 'UNREPAIRABLE_CHECK', 'DISPOSAL', 'DONE', 'CLOSED', 'CANCELLED'));
 ALTER TABLE repair_status_history DROP CONSTRAINT IF EXISTS repair_status_history_to_status_check;
 ALTER TABLE repair_status_history ADD CONSTRAINT repair_status_history_to_status_check CHECK (to_status IN (
   'NEW', 'ACCEPTED', 'IN_PROGRESS', 'WAIT_PART', 'PART_APPROVAL', 'PO_PENDING', 'PO_APPROVED', 'PART_PURCHASING',
-  'PART_ARRIVED', 'WAIT_EXTERNAL', 'EXT_APPROVAL', 'EXT_SENT', 'EXT_RECEIVED', 'DONE', 'CLOSED', 'CANCELLED'));
+  'PART_ARRIVED', 'WAIT_EXTERNAL', 'EXT_APPROVAL', 'EXT_PRICE_PENDING', 'EXT_PRICE_APPROVED', 'EXT_SENT',
+  'EXT_RECEIVED', 'UNREPAIRABLE_CHECK', 'DISPOSAL', 'DONE', 'CLOSED', 'CANCELLED'));
 

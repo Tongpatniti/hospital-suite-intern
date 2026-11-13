@@ -1,6 +1,6 @@
 import { Request } from 'express';
 import { PoolClient } from 'pg';
-import db from '../db';
+import db from './db';
 
 export const mtpPool = db.mtpPool;
 
@@ -19,23 +19,27 @@ export const STATUS_LABEL: Record<string, string> = {
   PART_ARRIVED: 'อะไหล่ถึงคลัง',
   WAIT_EXTERNAL: 'แจ้งส่งซ่อมภายนอก',
   EXT_APPROVAL: 'พัสดุรับเรื่อง+รออนุมัติส่งซ่อม',
+  EXT_PRICE_PENDING: 'รออนุมัติราคาซ่อมภายนอก',
+  EXT_PRICE_APPROVED: 'อนุมัติราคาแล้ว รอส่งซ่อม',
   EXT_SENT: 'ส่งร้านภายนอกแล้ว',
   EXT_RECEIVED: 'รับอุปกรณ์คืนแล้ว',
+  UNREPAIRABLE_CHECK: 'ช่างตรวจซ้ำ (ซ่อมไม่ได้/ไม่คุ้ม)',
+  DISPOSAL: 'รอจำหน่าย',
   DONE: 'ซ่อมแล้วเสร็จ (รอตรวจรับ)',
   CLOSED: 'ตรวจรับ+ปิดงาน',
   CANCELLED: 'ยกเลิก',
 };
 
-export const OPEN_EXCLUDED = ['CLOSED', 'CANCELLED'];
+export const OPEN_EXCLUDED = ['CLOSED', 'CANCELLED', 'DISPOSAL'];
 
 // สถานะที่อยู่ในความดูแลของพัสดุ
 export const SUPPLY_STATUSES = [
   'WAIT_PART', 'PART_APPROVAL', 'PO_PENDING', 'PO_APPROVED', 'PART_PURCHASING', 'PART_ARRIVED',
-  'WAIT_EXTERNAL', 'EXT_APPROVAL', 'EXT_SENT',
+  'WAIT_EXTERNAL', 'EXT_APPROVAL', 'EXT_PRICE_PENDING', 'EXT_PRICE_APPROVED', 'EXT_SENT',
 ];
 
 // สถานะที่ช่างผู้รับผิดชอบยังถือใบงานอยู่ (ใช้กับการโอนงานและการเพิ่มผู้ร่วมซ่อม)
-export const TECH_HELD_STATUSES = ['ACCEPTED', 'IN_PROGRESS', 'WAIT_PART', 'WAIT_EXTERNAL', 'PART_ARRIVED', 'EXT_RECEIVED'];
+export const TECH_HELD_STATUSES = ['ACCEPTED', 'IN_PROGRESS', 'WAIT_PART', 'WAIT_EXTERNAL', 'PART_ARRIVED', 'EXT_RECEIVED', 'UNREPAIRABLE_CHECK'];
 
 // state diagram หัวข้อ 4 ของ spec
 export const TRANSITIONS: Record<string, string[]> = {
@@ -49,11 +53,15 @@ export const TRANSITIONS: Record<string, string[]> = {
   PART_PURCHASING: ['PART_ARRIVED'],
   PART_ARRIVED: ['IN_PROGRESS'],
   WAIT_EXTERNAL: ['EXT_APPROVAL', 'CANCELLED'],
-  EXT_APPROVAL: ['EXT_SENT', 'CANCELLED'],
-  EXT_SENT: ['EXT_RECEIVED'],
+  EXT_APPROVAL: ['EXT_PRICE_PENDING', 'CANCELLED'],
+  EXT_PRICE_PENDING: ['EXT_PRICE_APPROVED', 'EXT_APPROVAL'],
+  EXT_PRICE_APPROVED: ['EXT_SENT'],
+  EXT_SENT: ['EXT_RECEIVED', 'UNREPAIRABLE_CHECK'],
   EXT_RECEIVED: ['IN_PROGRESS'],
+  UNREPAIRABLE_CHECK: ['IN_PROGRESS', 'DISPOSAL'],
   DONE: ['CLOSED', 'IN_PROGRESS'],
   CLOSED: ['IN_PROGRESS'],
+  DISPOSAL: [],
   CANCELLED: [],
 };
 
@@ -71,8 +79,11 @@ export const STATUS_ACTOR: Record<string, Actor> = {
   PART_ARRIVED: 'tech',
   WAIT_EXTERNAL: 'supply',
   EXT_APPROVAL: 'supply',
+  EXT_PRICE_PENDING: 'po_approver',
+  EXT_PRICE_APPROVED: 'supply',
   EXT_SENT: 'supply',
   EXT_RECEIVED: 'tech',
+  UNREPAIRABLE_CHECK: 'tech',
   DONE: 'requester',
   CLOSED: 'requester',
 };
@@ -91,8 +102,12 @@ export const TARGET_ACTOR: Record<string, (Actor | 'any')[]> = {
   PART_PURCHASING: ['supply'],
   PART_ARRIVED: ['supply'],
   EXT_APPROVAL: ['supply'],
+  EXT_PRICE_PENDING: ['supply'],
+  EXT_PRICE_APPROVED: ['po_approver'],
   EXT_SENT: ['supply'],
   EXT_RECEIVED: ['supply'],
+  UNREPAIRABLE_CHECK: ['supply'],
+  DISPOSAL: ['tech'],
   CLOSED: ['requester'],
   CANCELLED: ['any'],
 };
@@ -101,6 +116,7 @@ export const TARGET_ACTOR: Record<string, (Actor | 'any')[]> = {
 export function targetActors(from: string, to: string): (Actor | 'any')[] {
   if (from === 'DONE' && to === 'IN_PROGRESS') return ['tech', 'requester'];
   if (from === 'PO_PENDING' && to === 'PART_APPROVAL') return ['po_approver'];
+  if (from === 'EXT_PRICE_PENDING') return ['po_approver'];
   return TARGET_ACTOR[to] || ['any'];
 }
 
@@ -130,10 +146,19 @@ export function visibleTypes(u: CurrentUser): AssetType[] {
   if (u.permissions.includes('repair.supply')) return ASSET_TYPES;
   // ผู้อนุมัติ PO ต้องเห็นใบซ่อมทุกประเภทที่รออนุมัติ
   if (u.permissions.includes('repair.po.approve')) return ASSET_TYPES;
+  if (u.permissions.includes('repair.approve')) return ASSET_TYPES;
   return ASSET_TYPES.filter((t) => {
     const k = t.toLowerCase();
     return u.permissions.includes(`repair.${k}.request`) || u.permissions.includes(`repair.${k}.tech`);
   });
+}
+
+// ผู้แจ้งซ่อมทั่วไป (ไม่มีสิทธิ์ช่าง พัสดุ หรือผู้อนุมัติ) เห็นเฉพาะใบที่ตนแจ้ง
+export function isRequesterOnly(u: CurrentUser): boolean {
+  if (can(u, 'repair.all')) return false;
+  return !u.permissions.some((p) =>
+    ['repair.supply', 'repair.approve', 'repair.po.approve'].includes(p) || /^repair\.(computer|medical|general)\.tech$/.test(p)
+  );
 }
 
 /**

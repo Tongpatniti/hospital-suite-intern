@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@repo/ui/button';
 import { Input } from '@repo/ui/input';
@@ -180,6 +180,7 @@ export interface External {
   requested_by_name: string | null;
   requested_date: string;
   vendor_name: string | null;
+  quoted_price: number | null;
   sent_date: string | null;
   return_date: string | null;
   actual_cost: number | null;
@@ -187,14 +188,20 @@ export interface External {
 }
 
 
-export function ExternalFields({ step, form, onChange }: { step: 'request' | 'send' | 'receive'; form: ExternalForm; onChange: (f: ExternalForm) => void }) {
+export function ExternalFields({ step, form, onChange }: { step: 'request' | 'price' | 'send' | 'receive'; form: ExternalForm; onChange: (f: ExternalForm) => void }) {
   const set = <K extends keyof ExternalForm>(k: K, v: ExternalForm[K]) => onChange({ ...form, [k]: v });
+  const [vendors, setVendors] = useState<string[]>([]);
+  useEffect(() => {
+    api.get('/api/repair-vendors').then((r) => setVendors(r.data.data)).catch(() => setVendors([]));
+  }, []);
+  const vendorList = <datalist id="vendor-options">{vendors.map((v) => <option key={v} value={v} />)}</datalist>;
   if (step === 'request') {
     return (
       <div className="space-y-3">
         <div className="space-y-1">
           <Label htmlFor="sv">ร้านที่เสนอ (ถ้ามี)</Label>
-          <Input id="sv" value={form.suggested_vendor} onChange={(e) => set('suggested_vendor', e.target.value)} />
+          <Input id="sv" list="vendor-options" placeholder="เลือกจากรายการหรือพิมพ์ใหม่" value={form.suggested_vendor} onChange={(e) => set('suggested_vendor', e.target.value)} />
+          {vendorList}
         </div>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={form.is_warranty} onChange={(e) => set('is_warranty', e.target.checked)} />
@@ -203,13 +210,24 @@ export function ExternalFields({ step, form, onChange }: { step: 'request' | 'se
       </div>
     );
   }
-  if (step === 'send') {
+  if (step === 'price') {
     return (
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1 sm:col-span-2">
           <Label htmlFor="vn">ร้านที่ส่งซ่อม *</Label>
-          <Input id="vn" value={form.vendor_name} onChange={(e) => set('vendor_name', e.target.value)} />
+          <Input id="vn" list="vendor-options" placeholder="เลือกจากรายการหรือพิมพ์ใหม่" value={form.vendor_name} onChange={(e) => set('vendor_name', e.target.value)} />
+          {vendorList}
         </div>
+        <div className="space-y-1 sm:col-span-2">
+          <Label htmlFor="qp">ราคาที่ร้านเสนอ (บาท) *</Label>
+          <Input id="qp" type="number" min="0" step="0.01" value={form.quoted_price} onChange={(e) => set('quoted_price', e.target.value)} />
+        </div>
+      </div>
+    );
+  }
+  if (step === 'send') {
+    return (
+      <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1">
           <Label htmlFor="sd">วันที่ส่ง *</Label>
           <Input id="sd" type="date" required max={todayLocal()} value={form.sent_date} onChange={(e) => set('sent_date', e.target.value)} />
@@ -240,10 +258,11 @@ export function ExternalSummary({ items }: { items: External[] }) {
     <div className="space-y-3 text-sm">
       {items.map((e) => (
         <dl key={e.external_id} className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-md border p-3">
-          <dt className="text-slate-500">ส่งเรื่องโดย</dt><dd>{e.requested_by_name || '-'}{e.is_warranty && ' · ในประกัน'}</dd>
+          <dt className="text-slate-500">ส่งเรื่องโดย</dt><dd>{e.requested_by_name || '-'}{(e.vendor_name || e.suggested_vendor) && ` · ${e.vendor_name || e.suggested_vendor}`}{e.is_warranty && ' · ในประกัน'}</dd>
           {e.reason && (<><dt className="text-slate-500">เหตุผล</dt><dd>{e.reason}</dd></>)}
           {e.suggested_vendor && (<><dt className="text-slate-500">ร้านที่ช่างเสนอ</dt><dd>{e.suggested_vendor}</dd></>)}
           <dt className="text-slate-500">ร้านที่ส่ง</dt><dd>{e.vendor_name || 'รอพัสดุดำเนินการ'}</dd>
+          {e.quoted_price != null && (<><dt className="text-slate-500">ราคาที่ร้านเสนอ</dt><dd className="tabular-nums">{fmtMoney(e.quoted_price)} บาท</dd></>)}
           {e.sent_date && (<><dt className="text-slate-500">วันที่ส่ง</dt><dd>{e.sent_date}</dd></>)}
           {e.return_date && (<><dt className="text-slate-500">วันที่รับคืน</dt><dd>{e.return_date}</dd></>)}
           {e.actual_cost != null && (<><dt className="text-slate-500">ค่าซ่อม</dt><dd className="tabular-nums">{fmtMoney(e.actual_cost)} บาท</dd></>)}

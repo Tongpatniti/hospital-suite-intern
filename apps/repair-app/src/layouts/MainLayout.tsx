@@ -2,11 +2,11 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '@repo/ui/button';
-import { ArrowLeft, Bell, Building2, ClipboardList, History, LogOut, Monitor, Settings, ShieldCheck, Stethoscope } from 'lucide-react';
+import { ArrowLeft, Bell, Building2, ClipboardList, FileText, History, LogOut, Monitor, Settings, ShieldCheck, Stethoscope, Wrench } from 'lucide-react';
 import { cn } from '@repo/ui/utils';
 import api from '../lib/api';
 import { fmtDateTimeTH } from '../lib/format';
-import { canRequestType, canViewType, type AssetType } from '../lib/repair';
+import { canRequestType, canViewType, hasAnyTech, isAdmin, type AssetType } from '../lib/repair';
 
 interface Notification { notification_id: number; ticket_id: number | null; type: string; title: string; message: string | null; is_read: boolean; created_at: string }
 
@@ -41,8 +41,10 @@ const MainLayout: React.FC = () => {
 
   const utilityItems: NavItem[] = [
     { label: 'ประวัติการซ่อม', icon: <History size={20} />, path: '/assets' },
+    ...(hasAnyTech(hasPermission) || hasPermission('repair.supply') ? [{ label: 'ประวัติการทำงาน', icon: <Wrench size={20} />, path: '/work-history' }] : []),
+    ...(hasPermission('repair.supply') || isAdmin(hasPermission) ? [{ label: 'ประวัติการยื่น PO', icon: <FileText size={20} />, path: '/po-history' }] : []),
     ...(hasPermission('repair.audit.view') ? [{ label: 'ประวัติการตั้งค่า', icon: <ShieldCheck size={20} />, path: '/audit' }] : []),
-    { label: 'ตั้งค่าระบบ', icon: <Settings size={20} />, path: '/settings' },
+    ...(isAdmin(hasPermission) ? [{ label: 'ตั้งค่าระบบ', icon: <Settings size={20} />, path: '/settings' }] : []),
   ];
 
   const hubUrl = import.meta.env.DEV ? `http://${window.location.hostname}:5179/hub/` : '/hub/';

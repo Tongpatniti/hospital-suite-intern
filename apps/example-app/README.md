@@ -14,6 +14,6 @@
 2. แก้ `package.json` (name), `vite.config.ts` (base/port), `App.tsx` (basename)
 3. เปลี่ยน `STORAGE_KEY` / `TOKEN_KEY` ใน `contexts/AuthContext.tsx`
 4. เพิ่มการ์ดใน `apps/hub/src/App.tsx`
-5. สร้าง route ฝั่ง backend ใน `apps/backend/src/modules/` แล้วลงทะเบียนใน `src/index.ts`
+5. สร้าง route ฝั่ง backend ใน `apps/backend/src/` แล้วลงทะเบียนใน `src/index.ts`
 
 อ่านขั้นตอนละเอียดใน `README.md` ที่ root ของโปรเจกต์

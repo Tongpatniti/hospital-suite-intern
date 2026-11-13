@@ -121,10 +121,10 @@ pnpm dev          # backend + hub + example-app พร้อมกัน
 
 ### 3.2 Backend — เพิ่ม route
 
-1. สร้าง `apps/backend/src/modules/<ชื่อโมดูล>.ts`
+1. สร้าง `apps/backend/src/<ชื่อโมดูล>.ts`
    ```ts
    import { Express, Request, Response } from 'express';
-   import db from '../db';
+   import db from './db';
 
    const mtpPool = db.mtpPool;   // ← ใช้ pool กลางเท่านั้น ห้ามสร้าง Pool ใหม่
 
@@ -134,7 +134,7 @@ pnpm dev          # backend + hub + example-app พร้อมกัน
    ```
 2. ลงทะเบียนใน `apps/backend/src/index.ts`
    ```ts
-   import { suppliesRoutes } from './modules/supplies';
+   import { suppliesRoutes } from './supplies';
    // ...
    suppliesRoutes(app);
    ```
@@ -171,7 +171,7 @@ pnpm dev          # backend + hub + example-app พร้อมกัน
    - `vite.config.ts` → proxy `/api` ชี้ `http://localhost:3001`
    - `server.port` ให้ไม่ชนแอปเดิม (ดูรายการพอร์ตใน repo จริง)
    - `base` / `basename` ให้ตรงกับ path ที่ hub ใช้
-3. คัดลอกไฟล์ backend `src/modules/<ชื่อโมดูล>.ts` ไปที่
+3. คัดลอกไฟล์ backend `src/<ชื่อโมดูล>.ts` ไปที่
    `hospital-suite-monorepo/apps/backend/src/modules/`
    (ถ้า repo จริงยังไม่มีโฟลเดอร์ `modules/` ให้วางที่ `src/` แล้วปรับ import)
 4. ลงทะเบียน route ใน `apps/backend/src/index.ts` ของ repo จริง

@@ -18,8 +18,12 @@ export const STATUS_LABEL: Record<string, string> = {
   PART_ARRIVED: 'อะไหล่ถึงคลัง',
   WAIT_EXTERNAL: 'แจ้งส่งซ่อมภายนอก',
   EXT_APPROVAL: 'รออนุมัติส่งซ่อม',
+  EXT_PRICE_PENDING: 'รออนุมัติราคาซ่อมภายนอก',
+  EXT_PRICE_APPROVED: 'อนุมัติราคาแล้ว รอส่งซ่อม',
   EXT_SENT: 'ส่งร้านภายนอกแล้ว',
   EXT_RECEIVED: 'รับอุปกรณ์คืนแล้ว',
+  UNREPAIRABLE_CHECK: 'ช่างตรวจซ้ำ (ซ่อมไม่ได้/ไม่คุ้ม)',
+  DISPOSAL: 'รอจำหน่าย',
   DONE: 'รอตรวจรับ',
   CLOSED: 'ปิดงาน',
   CANCELLED: 'ยกเลิก',
@@ -62,16 +66,17 @@ export const EVENT_LABEL: Record<string, string> = {
   CO_TECH_ADDED: 'เพิ่มผู้ร่วมซ่อม',
   CO_TECH_REMOVED: 'นำผู้ร่วมซ่อมออก',
   PO_REJECTED: 'ไม่อนุมัติ PO ส่งกลับให้พัสดุตรวจสอบอีกครั้ง',
+  ASSET_CHANGED: 'เปลี่ยนประเภทครุภัณฑ์ (มี/ไม่มีรหัส)',
 };
 
 // สถานะที่พัสดุดำเนินการ (ตรงกับ SUPPLY_STATUSES ฝั่ง backend)
 export const SUPPLY_STATUSES = [
   'WAIT_PART', 'PART_APPROVAL', 'PO_PENDING', 'PO_APPROVED', 'PART_PURCHASING', 'PART_ARRIVED',
-  'WAIT_EXTERNAL', 'EXT_APPROVAL', 'EXT_SENT',
+  'WAIT_EXTERNAL', 'EXT_APPROVAL', 'EXT_PRICE_PENDING', 'EXT_PRICE_APPROVED', 'EXT_SENT',
 ];
 
 // สถานะที่ช่างผู้รับผิดชอบยังถือใบงานอยู่ (ตรงกับ TECH_HELD_STATUSES ฝั่ง backend)
-export const TECH_HELD_STATUSES = ['ACCEPTED', 'IN_PROGRESS', 'WAIT_PART', 'WAIT_EXTERNAL', 'PART_ARRIVED', 'EXT_RECEIVED'];
+export const TECH_HELD_STATUSES = ['ACCEPTED', 'IN_PROGRESS', 'WAIT_PART', 'WAIT_EXTERNAL', 'PART_ARRIVED', 'EXT_RECEIVED', 'UNREPAIRABLE_CHECK'];
 
 type HasPermission = (permission: string) => boolean;
 
@@ -81,7 +86,7 @@ export const canRequestType = (has: HasPermission, t: AssetType) =>
 export const isTechOf = (has: HasPermission, t: AssetType) =>
   isAdmin(has) || has(`repair.${t.toLowerCase()}.tech`);
 export const canViewType = (has: HasPermission, t: AssetType) =>
-  isTechOf(has, t) || canRequestType(has, t) || has('repair.supply') || has('repair.po.approve');
+  isTechOf(has, t) || canRequestType(has, t) || has('repair.supply') || has('repair.po.approve') || has('repair.approve');
 export const hasAnyTech = (has: HasPermission) => (Object.keys(ASSET_TYPE_LABEL) as AssetType[]).some((t) => isTechOf(has, t));
 
 export const TYPE_LIST_LABEL: Record<AssetType, string> = {

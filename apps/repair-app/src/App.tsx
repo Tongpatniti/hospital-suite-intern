@@ -6,6 +6,8 @@ import RepairList from './pages/RepairList';
 import RepairCreate from './pages/RepairCreate';
 import RepairDetail from './pages/RepairDetail';
 import AssetHistory from './pages/AssetHistory';
+import WorkHistory from './pages/WorkHistory';
+import PoHistory from './pages/PoHistory';
 import AuditLogs from './pages/AuditLogs';
 import RepairSettings from './pages/RepairSettings';
 import { Toaster } from '@repo/ui/toaster';
@@ -46,8 +48,10 @@ function App() {
             <Route path="repairs/:id" element={<RepairDetail />} />
             <Route path="assets" element={<AssetHistory />} />
             <Route path="assets/:id" element={<AssetHistory />} />
+            <Route path="work-history" element={<WorkHistory />} />
+            <Route path="po-history" element={<PoHistory />} />
             <Route path="audit" element={<ProtectedRoute permission="repair.audit.view"><AuditLogs /></ProtectedRoute>} />
-            <Route path="settings" element={<RepairSettings />} />
+            <Route path="settings" element={<ProtectedRoute permission="repair.all"><RepairSettings /></ProtectedRoute>} />
           </Route>
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>

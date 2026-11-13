@@ -152,11 +152,38 @@ export async function applyStepData(
     return { is_warranty: ext.is_warranty === true };
   }
 
-  if (toStatus === 'EXT_SENT') {
+  if (toStatus === 'EXT_PRICE_PENDING') {
     const vendor = String(ext.vendor_name || '').trim();
     if (!vendor) throw new HttpError(400, 'กรุณาระบุร้านที่ส่งซ่อม');
-    const sent = await checkDate(client, ext.sent_date, 'วันที่ส่ง');
+    const quoted = num(ext.quoted_price);
+    if (quoted === null) throw new HttpError(400, 'กรุณาระบุราคาที่เสนอจากร้าน');
+    if (Number.isNaN(quoted)) throw new HttpError(400, 'ราคาที่เสนอไม่ถูกต้อง');
     const e = await latestExternal(client, t.ticket_id);
+    await client.query(
+      `UPDATE repair_externals SET vendor_name = $1, quoted_price = $2, status = 'PRICE_PENDING'
+        WHERE external_id = $3`,
+      [vendor.slice(0, 255), quoted, e.external_id]
+    );
+    return { vendor_name: vendor, quoted_price: quoted };
+  }
+
+  if (toStatus === 'EXT_PRICE_APPROVED' || (t.status === 'EXT_PRICE_PENDING' && toStatus === 'EXT_APPROVAL')) {
+    const approved = toStatus === 'EXT_PRICE_APPROVED';
+    const e = await latestExternal(client, t.ticket_id);
+    await client.query(
+      `UPDATE repair_externals SET price_decided_by = $1, price_decided_at = NOW(), price_decision_remark = $2,
+              status = $3
+        WHERE external_id = $4`,
+      [personId, String(body.remark || '').trim() || null, approved ? 'PRICE_APPROVED' : 'REQUESTED', e.external_id]
+    );
+    return { price_decision: approved ? 'APPROVED' : 'REJECTED', quoted_price: e.quoted_price !== null ? Number(e.quoted_price) : null };
+  }
+
+  if (toStatus === 'EXT_SENT') {
+    const e = await latestExternal(client, t.ticket_id);
+    const vendor = String(ext.vendor_name || e.vendor_name || '').trim();
+    if (!vendor) throw new HttpError(400, 'กรุณาระบุร้านที่ส่งซ่อม');
+    const sent = await checkDate(client, ext.sent_date, 'วันที่ส่ง');
     await client.query(
       `UPDATE repair_externals SET vendor_name = $1, sent_date = $2::date, sent_by = $3, status = 'SENT'
         WHERE external_id = $4`,
@@ -165,22 +192,23 @@ export async function applyStepData(
     return { vendor_name: vendor };
   }
 
-  if (toStatus === 'EXT_RECEIVED') {
+  if (toStatus === 'EXT_RECEIVED' || toStatus === 'UNREPAIRABLE_CHECK') {
+    const unrepairable = toStatus === 'UNREPAIRABLE_CHECK';
     const cost = num(ext.actual_cost);
-    if (cost === null) throw new HttpError(400, 'กรุณาระบุค่าซ่อม');
-    if (Number.isNaN(cost)) throw new HttpError(400, 'ค่าซ่อมไม่ถูกต้อง');
+    if (!unrepairable && cost === null) throw new HttpError(400, 'กรุณาระบุค่าซ่อม');
+    if (cost !== null && Number.isNaN(cost)) throw new HttpError(400, 'ค่าซ่อมไม่ถูกต้อง');
     const ret = await checkDate(client, ext.return_date, 'วันที่รับอุปกรณ์คืน');
     const e = await latestExternal(client, t.ticket_id);
     if (e.sent_date && ret < String(e.sent_date instanceof Date ? e.sent_date.toISOString().slice(0, 10) : e.sent_date).slice(0, 10)) {
       throw new HttpError(400, 'วันที่รับเครื่องคืนต้องไม่ก่อนวันที่ส่ง');
     }
     await client.query(
-      `UPDATE repair_externals SET return_date = $1::date, actual_cost = $2, invoice_no = $3,
+      `UPDATE repair_externals SET return_date = $1::date, actual_cost = COALESCE($2, actual_cost), invoice_no = $3,
               received_by = $4, status = 'RETURNED'
         WHERE external_id = $5`,
       [ret, cost, String(ext.invoice_no || '').trim() || null, personId, e.external_id]
     );
-    return cost !== null ? { actual_cost: cost } : {};
+    return cost !== null ? { actual_cost: cost, cannot_repair: unrepairable } : { cannot_repair: unrepairable };
   }
 
   return {};
@@ -224,7 +252,7 @@ export async function listPurchaseOrders(ticketId: number) {
 export async function listExternals(ticketId: number) {
   try {
     const { rows } = await mtpPool.query(
-      `SELECT e.*, e.actual_cost::float AS actual_cost,
+      `SELECT e.*, e.actual_cost::float AS actual_cost, e.quoted_price::float AS quoted_price,
               rq.firstname || ' ' || COALESCE(rq.lastname, '') AS requested_by_name
          FROM repair_externals e LEFT JOIN person rq ON rq.person_id = e.requested_by
         WHERE e.ticket_id = $1 ORDER BY e.external_id`,
@@ -255,6 +283,27 @@ export function repairStepRoutes(app: Express) {
       res.status(201).json({ success: true });
     } catch (err) {
       sendError(res, err, 'เพิ่มรายการอะไหล่ไม่สำเร็จ');
+    }
+  });
+
+  // รายชื่อร้าน/บริษัทที่เคยใช้ส่งซ่อม (เรียงตามจำนวนครั้งที่ใช้) สำหรับ dropdown ในฟอร์มซ่อมภายนอก
+  app.get('/api/repair-vendors', async (req: Request, res: Response) => {
+    try {
+      const u = await getCurrentUser(req);
+      if (!u) throw new HttpError(401, 'ไม่พบผู้ใช้งาน');
+      const { rows } = await mtpPool.query(
+        `SELECT name FROM (
+           SELECT vendor_name AS name, COUNT(*)::int AS n FROM repair_externals
+            WHERE vendor_name IS NOT NULL AND vendor_name <> '' GROUP BY vendor_name
+           UNION ALL
+           SELECT suggested_vendor AS name, COUNT(*)::int AS n FROM repair_externals
+            WHERE suggested_vendor IS NOT NULL AND suggested_vendor <> '' GROUP BY suggested_vendor
+         ) v
+         GROUP BY name ORDER BY SUM(n) DESC, name LIMIT 200`
+      );
+      res.json({ success: true, data: rows.map((r) => r.name as string) });
+    } catch (err) {
+      sendError(res, err, 'โหลดรายชื่อร้านไม่สำเร็จ');
     }
   });
 

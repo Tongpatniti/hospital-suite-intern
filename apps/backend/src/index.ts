@@ -2,14 +2,14 @@ import express from 'express';
 import cors from 'cors';
 import db from './db';
 import { authRoutes } from './auth';
-import { trainingItemsRoutes } from './modules/training_items';
-import { repairRoutes } from './modules/repair';
-import { repairAttachmentRoutes } from './modules/repair_attachments';
-import { repairStepRoutes } from './modules/repair_steps';
-import { repairHistoryRoutes } from './modules/repair_history';
-import { repairTeamRoutes } from './modules/repair_team';
-import { runSlaScan, startSlaScheduler } from './modules/repair_sla';
-import { can, getCurrentUser } from './modules/repair_common';
+import { trainingItemsRoutes } from './training_items';
+import { repairRoutes } from './repair';
+import { repairAttachmentRoutes } from './repair_attachments';
+import { repairStepRoutes } from './repair_steps';
+import { repairHistoryRoutes } from './repair_history';
+import { repairTeamRoutes } from './repair_team';
+import { runSlaScan, startSlaScheduler } from './repair_sla';
+import { can, getCurrentUser } from './repair_common';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3002', 10);
@@ -30,7 +30,7 @@ app.get('/api/health', async (_req, res) => {
 
 // ---------------------------------------------------------------------------
 // ลงทะเบียน route ของทุกโมดูลที่นี่
-// เพิ่มโมดูลใหม่ = สร้างไฟล์ใน src/modules/ แล้ว import + เรียกใช้ด้านล่าง
+// เพิ่มโมดูลใหม่ = สร้างไฟล์ใน src/ แล้ว import + เรียกใช้ด้านล่าง
 // ---------------------------------------------------------------------------
 authRoutes(app);
 trainingItemsRoutes(app);

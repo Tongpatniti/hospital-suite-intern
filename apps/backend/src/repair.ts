@@ -7,6 +7,7 @@ import {
   HttpError,
   OPEN_EXCLUDED,
   STATUS_LABEL,
+  isRequesterOnly,
   SUPPLY_STATUSES,
   targetActors,
   TRANSITIONS,
@@ -109,6 +110,11 @@ async function syncAssetStatus(
   if (rows.length === 0) return;
   const current = rows[0].status as string;
 
+  if (toStatus === 'DISPOSAL') {
+    await client.query('UPDATE assets SET status = $1 WHERE asset_id = $2', [disposal, ticket.asset_id]);
+    return;
+  }
+
   if (toStatus === 'ACCEPTED' || (toStatus === 'IN_PROGRESS' && ticket.asset_status_before === null)) {
     if (current !== repairing) {
       await client.query('UPDATE repair_tickets SET asset_status_before = $1 WHERE ticket_id = $2', [current, ticket.ticket_id]);
@@ -209,7 +215,8 @@ export function repairRoutes(app: Express) {
                 rq.firstname || ' ' || COALESCE(rq.lastname, '') AS requester_name,
                 asg.firstname || ' ' || COALESCE(asg.lastname, '') AS assignee_name,
                 ROUND((EXTRACT(EPOCH FROM (NOW() - t.status_entered_at)) / 3600)::NUMERIC, 1)::FLOAT AS hours_in_status,
-                sla.warn_after_hours::FLOAT AS warn_after_hours
+                sla.warn_after_hours::FLOAT AS warn_after_hours,
+                FLOOR(EXTRACT(EPOCH FROM (COALESCE(t.closed_date, NOW()) - COALESCE(t.accepted_date, t.created_date))) / 86400)::INT AS work_days
            FROM repair_tickets t
            JOIN person rq ON rq.person_id = t.requester_id
            LEFT JOIN person asg ON asg.person_id = t.assignee_id
@@ -323,6 +330,8 @@ export function repairRoutes(app: Express) {
       const u = await requireUser(req);
       const { asset_id, title, description, urgency, location, duplicate_of_ticket_id, duplicate_reason } = req.body;
       let assetType: AssetType = String(req.body.asset_type || 'GENERAL').toUpperCase() as AssetType;
+      const brand = String(req.body.brand || '').trim();
+      if (!brand) throw new HttpError(400, 'กรุณาระบุยี่ห้อ');
 
       const result = await withTx({ userId: u.person_id, ip: clientIp(req) }, async (client) => {
         let asset: Record<string, unknown> | null = null;
@@ -364,8 +373,8 @@ export function repairRoutes(app: Express) {
              ticket_no, asset_type, asset_id, asset_code_snapshot, asset_name_snapshot, serial_number_snapshot,
              asset_department_snapshot, custodian_name_snapshot, location_snapshot, title, description, urgency,
              requester_id, requester_department_id, asset_department_id, duplicate_of_ticket_id, duplicate_reason,
-             create_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$13)
+             create_by, brand)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$13,$18)
            RETURNING *`,
           [
             ticketNo, assetType, asset_id || null,
@@ -375,6 +384,7 @@ export function repairRoutes(app: Express) {
             finalTitle, description || null, urgency || 'NORMAL',
             u.person_id, me.rows[0]?.department_id ?? null, asset?.department_id ?? null,
             duplicate_of_ticket_id || null, duplicate_of_ticket_id ? String(duplicate_reason).trim() : null,
+            brand.slice(0, 100),
           ]
         );
         const t = ins.rows[0];
@@ -402,6 +412,7 @@ export function repairRoutes(app: Express) {
   app.patch('/api/repairs/:id/status', async (req: Request, res: Response) => {
     try {
       const u = await requireUser(req);
+      if (!Number.isInteger(Number(req.params.id)) || Number(req.params.id) <= 0) throw new HttpError(404, 'ไม่พบใบซ่อม');
       const toStatus = String(req.body.to_status || '');
       const remark = String(req.body.remark || '').trim() || null;
       const closeResult = req.body.close_result ? String(req.body.close_result) : null;
@@ -418,6 +429,9 @@ export function repairRoutes(app: Express) {
         if (toStatus === 'DONE' && !remark) throw new HttpError(400, 'กรุณาระบุรายละเอียดการซ่อม');
         if (toStatus === 'WAIT_EXTERNAL' && !remark) throw new HttpError(400, 'กรุณาระบุอาการ / เหตุผลที่ต้องส่งซ่อมภายนอก');
         if (t.status === 'PO_PENDING' && toStatus === 'PART_APPROVAL' && !remark) throw new HttpError(400, 'กรุณาระบุเหตุผลที่ไม่อนุมัติ PO');
+        if (t.status === 'EXT_PRICE_PENDING' && toStatus === 'EXT_APPROVAL' && !remark) throw new HttpError(400, 'กรุณาระบุเหตุผลที่ไม่อนุมัติราคา');
+        if (toStatus === 'UNREPAIRABLE_CHECK' && !remark) throw new HttpError(400, 'กรุณาระบุเหตุผลที่ซ่อมไม่ได้หรือไม่คุ้ม');
+        if (toStatus === 'DISPOSAL' && !remark) throw new HttpError(400, 'กรุณาระบุเหตุผลที่ส่งรอจำหน่าย');
         if (toStatus === 'IN_PROGRESS' && (t.status === 'DONE' || t.status === 'CLOSED') && !remark) {
           throw new HttpError(400, 'กรุณาระบุเหตุผลที่ส่งกลับซ่อม');
         }
@@ -465,6 +479,13 @@ export function repairRoutes(app: Express) {
         if (toStatus === 'IN_PROGRESS' && t.status === 'PART_ARRIVED') metadata.event = 'PART_ISSUED';
         if (toStatus === 'IN_PROGRESS' && t.status === 'EXT_RECEIVED') metadata.event = 'EXT_INSPECTED';
         if (toStatus === 'IN_PROGRESS' && t.status === 'DONE') sets.push('done_date = NULL', 'done_by = NULL', 'close_result = NULL');
+        if (toStatus === 'IN_PROGRESS' && t.status === 'ACCEPTED') {
+          const days = parseInt(String(req.body.expected_days || ''), 10);
+          if (!(days >= 1)) throw new HttpError(400, 'กรุณาระบุระยะเวลาที่คาดไว้ในการซ่อม (วัน)');
+          sets.push(`expected_days = $${vals.push(days)}`);
+          metadata.expected_days = days;
+        }
+        if (toStatus === 'DISPOSAL') sets.push('closed_date = NOW()', "close_result = 'UNREPAIRABLE'");
 
         // ข้อมูลประจำขั้น (ฟอร์มอะไหล่ / ส่งซ่อมภายนอก)
         Object.assign(metadata, await applyStepData(client, t, toStatus, req.body, u.person_id));
@@ -501,6 +522,9 @@ export function repairRoutes(app: Express) {
         if (toStatus === 'PO_PENDING') {
           recipients.push(...(await personsWithPermission(client, 'repair.po.approve')).filter((id) => id !== u.person_id));
         }
+        if (toStatus === 'EXT_PRICE_PENDING') {
+          recipients.push(...(await personsWithPermission(client, 'repair.po.approve')).filter((id) => id !== u.person_id));
+        }
         if (toStatus === 'WAIT_PART' || toStatus === 'WAIT_EXTERNAL') {
           recipients.push(...(await personsWithPermission(client, 'repair.supply')).filter((id) => id !== u.person_id));
         }
@@ -515,6 +539,82 @@ export function repairRoutes(app: Express) {
       res.json({ success: true, data: result });
     } catch (err) {
       sendError(res, err, 'เปลี่ยนสถานะไม่สำเร็จ');
+    }
+  });
+
+  // ---------------------------------------------------------------- change asset (มีรหัส ↔ ไม่มีรหัส)
+  app.patch('/api/repairs/:id/asset', async (req: Request, res: Response) => {
+    try {
+      const u = await requireUser(req);
+      if (!Number.isInteger(Number(req.params.id)) || Number(req.params.id) <= 0) throw new HttpError(404, 'ไม่พบใบซ่อม');
+      const assetId = req.body.asset_id ? Number(req.body.asset_id) : null;
+      const reason = String(req.body.reason || '').trim();
+      if (!reason) throw new HttpError(400, 'กรุณาระบุเหตุผลที่เปลี่ยนประเภทครุภัณฑ์');
+
+      await withTx({ userId: u.person_id, reason }, async (client) => {
+        const { rows } = await client.query('SELECT * FROM repair_tickets WHERE ticket_id = $1 FOR UPDATE', [req.params.id]);
+        const t = rows[0];
+        if (!t) throw new HttpError(404, 'ไม่พบใบซ่อม');
+        if (!['ACCEPTED', 'IN_PROGRESS'].includes(t.status)) throw new HttpError(400, 'เปลี่ยนประเภทครุภัณฑ์ได้เฉพาะตอนรับงาน/กำลังดำเนินงาน');
+        if (t.assignee_id !== u.person_id && !can(u, 'repair.all')) throw new HttpError(403, 'เฉพาะช่างผู้รับผิดชอบเท่านั้น');
+        if (assetId === t.asset_id) throw new HttpError(400, 'เลือกครุภัณฑ์เดิมอยู่แล้ว');
+
+        let asset: Record<string, unknown> | null = null;
+        if (assetId) {
+          const a = await client.query(
+            `SELECT a.*, d.name AS department_name FROM assets a
+               LEFT JOIN departments d ON d.department_id = a.department_id
+              WHERE a.asset_id = $1 FOR UPDATE OF a`,
+            [assetId]
+          );
+          if (a.rows.length === 0) throw new HttpError(404, 'ไม่พบครุภัณฑ์');
+          asset = a.rows[0] as Record<string, unknown>;
+          if (assetTypeOf(asset.equipment_type_id as number) !== t.asset_type) {
+            throw new HttpError(400, 'ประเภทครุภัณฑ์ไม่ตรงกับประเภทของใบซ่อม');
+          }
+          const open = (await findOpenTickets(client, assetId)).filter((o) => o.ticket_id !== t.ticket_id);
+          if (open.length > 0) {
+            throw new HttpError(409, `เครื่องนี้มีใบซ่อมค้างอยู่แล้ว ${open[0].ticket_no}`, { code: 'OPEN_TICKET_EXISTS', open_tickets: open });
+          }
+        }
+
+        const repairing = await getSetting(client, 'asset_status_repairing', 'REPAIRING');
+        if (t.asset_id) {
+          const others = await client.query(
+            `SELECT 1 FROM repair_tickets WHERE asset_id = $1 AND ticket_id <> $2 AND status <> ALL($3) LIMIT 1`,
+            [t.asset_id, t.ticket_id, OPEN_EXCLUDED]
+          );
+          if (others.rows.length === 0 && t.asset_status_before) {
+            await client.query('UPDATE assets SET status = $1 WHERE asset_id = $2', [t.asset_status_before, t.asset_id]);
+          }
+        }
+        let before: string | null = null;
+        if (asset) {
+          before = asset.status === repairing ? 'AVAILABLE' : String(asset.status);
+          if (asset.status !== repairing) {
+            await client.query('UPDATE assets SET status = $1 WHERE asset_id = $2', [repairing, assetId]);
+          }
+        }
+
+        await client.query(
+          `UPDATE repair_tickets SET asset_id = $1, asset_status_before = $2, asset_code_snapshot = $3, asset_name_snapshot = $4,
+                  serial_number_snapshot = $5, asset_department_snapshot = $6, custodian_name_snapshot = $7,
+                  location_snapshot = COALESCE($8, location_snapshot), asset_department_id = $9, modify_by = $10, modify_date = NOW()
+            WHERE ticket_id = $11`,
+          [assetId, before, asset?.asset_code ?? null, asset?.name ?? null, asset?.serial_number ?? null,
+           asset?.department_name ?? null, asset?.custodian_name ?? null, asset?.location ?? null,
+           asset?.department_id ?? null, u.person_id, t.ticket_id]
+        );
+        await client.query(
+          `INSERT INTO repair_status_history (ticket_id, from_status, to_status, remark, metadata, changed_by)
+           VALUES ($1, $2, $2, $3, $4, $5)`,
+          [t.ticket_id, t.status, reason,
+           { event: 'ASSET_CHANGED', from_asset: t.asset_code_snapshot, to_asset: asset?.asset_code ?? null }, u.person_id]
+        );
+      });
+      res.json({ success: true });
+    } catch (err) {
+      sendError(res, err, 'เปลี่ยนประเภทครุภัณฑ์ไม่สำเร็จ');
     }
   });
 
@@ -596,7 +696,7 @@ export function repairRoutes(app: Express) {
 
   app.get('/api/assets/:id/repair-history', async (req: Request, res: Response) => {
     try {
-      await requireUser(req);
+      const u = await requireUser(req);
       const id = Number(req.params.id);
       const asset = await mtpPool.query(
         `SELECT a.*, d.name AS department_name FROM assets a
@@ -613,7 +713,8 @@ export function repairRoutes(app: Express) {
              FROM repair_tickets t
              LEFT JOIN person asg ON asg.person_id = t.assignee_id
              LEFT JOIN repair_evaluations ev ON ev.ticket_id = t.ticket_id
-            WHERE t.asset_id = $1 ORDER BY t.created_date DESC`,
+            WHERE t.asset_id = $1 ${isRequesterOnly(u) ? `AND t.requester_id = ${Number(u.person_id)}` : ''}
+            ORDER BY t.created_date DESC`,
           [id]
         ),
         getSetting(mtpPool, 'replace_suggest_cost_pct', '50'),

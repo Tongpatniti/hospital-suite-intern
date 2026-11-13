@@ -44,9 +44,9 @@ pnpm --filter repair-app dev          # http://localhost:5181/repair/
 ## Backend
 
 - `apps/backend/sql/repair.sql` — schema
-- `apps/backend/src/modules/repair.ts` — API
-- `apps/backend/src/modules/repair_sla.ts` — ตรวจงานค้างทุก `sla_scan_interval_min` นาที (สั่งรันทันที: `POST /api/repair-sla/run`)
-- `apps/backend/src/modules/repair_common.ts` — สิทธิ์, transition, transaction + audit context
+- `apps/backend/src/repair.ts` — API
+- `apps/backend/src/repair_sla.ts` — ตรวจงานค้างทุก `sla_scan_interval_min` นาที (สั่งรันทันที: `POST /api/repair-sla/run`)
+- `apps/backend/src/repair_common.ts` — สิทธิ์, transition, transaction + audit context
 
 ## ไฟล์แนบ
 
