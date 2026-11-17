@@ -61,7 +61,7 @@ const RepairCreate: React.FC = () => {
 
   useEffect(() => {
     const t = setTimeout(() => {
-      api.get('/api/repair-assets', { params: { q: assetQ } })
+      api.get('/api/repair-assets', { params: { q: assetQ, all_types: 1 } })
         .then((res) => setAssets(res.data.data))
         .catch((err) => toast({ title: errorMessage(err, 'โหลดครุภัณฑ์ไม่สำเร็จ'), variant: 'destructive' }));
     }, 250);

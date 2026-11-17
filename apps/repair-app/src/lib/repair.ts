@@ -81,8 +81,9 @@ export const TECH_HELD_STATUSES = ['ACCEPTED', 'IN_PROGRESS', 'WAIT_PART', 'WAIT
 type HasPermission = (permission: string) => boolean;
 
 export const isAdmin = (has: HasPermission) => has('repair.all');
+// ทุกตำแหน่งที่เข้าใช้ระบบแจ้งซ่อมได้ แจ้งซ่อมได้ทุกประเภท
 export const canRequestType = (has: HasPermission, t: AssetType) =>
-  isAdmin(has) || has(`repair.${t.toLowerCase()}.request`);
+  isAdmin(has) || has('repair.login') || has(`repair.${t.toLowerCase()}.request`);
 export const isTechOf = (has: HasPermission, t: AssetType) =>
   isAdmin(has) || has(`repair.${t.toLowerCase()}.tech`);
 export const canViewType = (has: HasPermission, t: AssetType) =>

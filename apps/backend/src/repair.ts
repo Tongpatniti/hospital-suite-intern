@@ -168,11 +168,14 @@ export function repairRoutes(app: Express) {
 
       const reqType = String(req.query.asset_type || '').toUpperCase();
       const isTypePage = ASSET_TYPES.includes(reqType as AssetType);
-      const typeFilter = isTypePage ? (types.includes(reqType as AssetType) ? [reqType] : []) : types;
-      params.push(typeFilter);
       if (isTypePage) {
-        where.push(`t.asset_type = ANY($${params.length})`);
+        params.push(reqType);
+        where.push(`t.asset_type = $${params.length}`);
+        params.push(types);
+        params.push(u.person_id);
+        where.push(`(t.asset_type = ANY($${params.length - 1}) OR t.requester_id = $${params.length})`);
       } else {
+        params.push(types);
         params.push(u.person_id);
         where.push(`(t.asset_type = ANY($${params.length - 1}) OR t.requester_id = $${params.length})`);
       }
@@ -360,9 +363,6 @@ export function repairRoutes(app: Express) {
           }
         }
         if (!ASSET_TYPES.includes(assetType)) throw new HttpError(400, 'ประเภทงานไม่ถูกต้อง');
-        if (!can(u, `repair.${assetType.toLowerCase()}.request`)) {
-          throw new HttpError(403, 'คุณไม่มีสิทธิ์แจ้งซ่อมประเภทนี้');
-        }
         const finalTitle = String(title || asset?.name || '').trim();
         if (!finalTitle) throw new HttpError(400, 'กรุณาระบุชื่อสิ่งของที่แจ้งซ่อม');
 
@@ -678,8 +678,9 @@ export function repairRoutes(app: Express) {
         [q, OPEN_EXCLUDED]
       );
       const types = visibleTypes(u);
+      const allTypes = String(req.query.all_types || '') === '1';
       res.json({ success: true, data: rows.map((r) => ({ ...r, asset_type: assetTypeOf(r.equipment_type_id) }))
-        .filter((r) => types.includes(r.asset_type)) });
+        .filter((r) => allTypes || types.includes(r.asset_type)) });
     } catch (err) {
       sendError(res, err, 'โหลดครุภัณฑ์ไม่สำเร็จ');
     }

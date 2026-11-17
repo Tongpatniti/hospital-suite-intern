@@ -71,17 +71,18 @@ const RepairList: React.FC = () => {
         { key: 'all', label: 'ทั้งหมด', params: {} },
       ];
     }
-    if (hasPermission('repair.po.approve') && !isRequester && !isTech && !isSupply) {
-      return [{ key: 'PO_PENDING', label: 'รออนุมัติ PO', params: { status: 'PO_PENDING' } }];
+    const approvalTab: Tab = { key: 'approvals', label: 'รออนุมัติ PO / ราคาซ่อม', params: { status: 'PO_PENDING,EXT_PRICE_PENDING' } };
+    if (hasPermission('repair.po.approve') && !isTech && !isSupply) {
+      return [approvalTab, { key: 'my_requests', label: 'แจ้งซ่อมของฉัน', params: { scope: 'my_requests' } }];
     }
     const newTab: Tab = { key: 'NEW', label: 'รอช่างรับงาน', params: { status: 'NEW' } };
     const list: Tab[] = isTech ? [newTab] : [];
-    if (isRequester) list.push({ key: 'my_requests', label: 'แจ้งซ่อมของฉัน', params: { scope: 'my_requests', status: 'open' } });
     if (isTech) list.push({ key: 'my_tasks', label: 'งานที่ฉันรับผิดชอบ', params: { scope: 'my_tasks', status: 'open' } });
     if (isSupply) {
       list.push({ key: 'supply', label: 'งานพัสดุ', params: { status: SUPPLY_STATUSES.join(',') } });
       list.push({ key: 'handled', label: 'งานที่ฉันดำเนินการ', params: { scope: 'handled' } });
     }
+    if (isRequester) list.push({ key: 'my_requests', label: 'แจ้งซ่อมของฉัน', params: { scope: 'my_requests', status: 'open' } });
     if (!isTech) list.push(newTab);
     if (isRequester) list.push({ key: 'DONE', label: 'รอตรวจรับ', params: { status: 'DONE' } });
     if (isTech || isSupply) list.push({ key: 'open', label: 'งานที่ยังไม่ปิด', params: { status: 'open' } });
